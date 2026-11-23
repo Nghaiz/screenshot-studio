@@ -14,7 +14,7 @@ use crate::contract::{AppError, Caller, ErrorKind};
 use crate::errors::{invalid, not_found, now_ms, system_time_ms};
 use crate::scan::has_image_extension;
 
-use super::fsio::{self, FileAction};
+use super::fsio::{self, FileAction, canonical};
 use super::journal::{
     CopyPayload, Entry, Location, MovePayload, OldValue, RecyclePayload, RenamePayload, Step, commit_steps, write_batch,
 };
@@ -30,23 +30,6 @@ const RESERVED_NAMES: [&str; 22] = [
 
 fn conflict(msg: impl Into<String>) -> AppError {
     AppError::new(ErrorKind::Conflict, msg)
-}
-
-/// `canonicalize` without the `\\?\` verbatim prefix (real on-disk case, long names).
-fn canonical(p: &Path) -> PathBuf {
-    match std::fs::canonicalize(p) {
-        Ok(c) => {
-            let s = c.to_string_lossy();
-            if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
-                PathBuf::from(format!(r"\\{rest}"))
-            } else if let Some(rest) = s.strip_prefix(r"\\?\") {
-                PathBuf::from(rest)
-            } else {
-                c
-            }
-        }
-        Err(_) => p.to_path_buf(),
-    }
 }
 
 /// The library root holding `dir` and the `/`-separated folder of `dir` inside it.

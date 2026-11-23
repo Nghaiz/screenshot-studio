@@ -30,6 +30,19 @@ to a kit. Newest first. One entry: what happened, why, what to do.
   `found staticlib serde_with_macros instead of rlib`; `cargo clean -p ss-core` did not fix it.
 - **Why (likely):** sccache served a bad artifact; the source compiled fine moments before.
 - **Do:** rebuild with `RUSTC_WRAPPER=""` (bypasses sccache), as for the release app build above.
+- **Seen again** with `RUSTC_WRAPPER=""` too, after more rebuilds with rust-analyzer running in VS Code:
+  `only metadata stub found for rlib dependency core`, `can't find crate for std`. Cause unknown (sccache
+  alone does not explain it). The same tree passed on CI, so trust the clean CI run over a churned local
+  `target/`; a full `cargo clean` is the local fix.
+
+### The Recycle Bin records the canonical path, not the path you deleted
+- **Seen:** CI only: Recycle Bin undo answered "no longer in the Recycle Bin" right after a successful recycle.
+- **Why:** the runner's temp dir resolves through an 8.3 short name (`C:\Users\RUNNER~1\...`). The root kept
+  that spelling, `trash` canonicalizes before deleting, so the bin's original path is the long name and a
+  plain string compare never matches. Locally the user name has no short form, so it never showed.
+- **Do:** compare canonical paths (`fsio::unrecycle`); `fileops_test` reproduces the same mismatch with a
+  root added as `...\x\..\x` (seen red on the old compare). Any path compare against what Windows records
+  needs `canonicalize` on both sides.
 
 ## 2026-11-23 — phase 1.4
 

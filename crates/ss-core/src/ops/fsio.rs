@@ -81,15 +81,28 @@ pub(crate) fn unrecycle(path: &Path, from_s: i64, to_s: i64) -> Result<(), AppEr
     if path.exists() {
         return Err(AppError::new(ErrorKind::Conflict, format!("cannot restore: {} exists again", path.display())));
     }
-    let want = norm_path(path);
+    // The bin records the canonical (long-name) path: `trash` canonicalizes before deleting, so a
+    // root picked through an 8.3 short name (`C:\Users\RUNNER~1\...`) must be compared canonically.
+    let want = norm_path(&canonical_in_parent(path));
+    let name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
     let found = on_fresh_thread(move || -> Result<(), AppError> {
         let items = trash::os_limited::list().map_err(|e| trash_err("Recycle Bin listing", e))?;
-        let item = items
-            .into_iter()
-            .filter(|it| norm_path(&it.original_path()) == want)
-            .filter(|it| (from_s - RECYCLE_TIME_SLACK_S..=to_s + RECYCLE_TIME_SLACK_S).contains(&it.time_deleted))
+        let window = from_s - RECYCLE_TIME_SLACK_S..=to_s + RECYCLE_TIME_SLACK_S;
+        let same_name: Vec<_> = items.into_iter().filter(|it| it.name == name).collect();
+        let item = same_name
+            .iter()
+            .filter(|it| norm_path(&canonical_in_parent(&it.original_path())) == want)
+            .filter(|it| window.contains(&it.time_deleted))
             .max_by_key(|it| it.time_deleted)
-            .ok_or_else(|| AppError::new(ErrorKind::NotFound, "the file is no longer in the Recycle Bin"))?;
+            .cloned()
+            .ok_or_else(|| {
+                let seen: Vec<String> =
+                    same_name.iter().map(|it| format!("{} @{}", it.original_path().display(), it.time_deleted)).collect();
+                AppError::new(ErrorKind::NotFound, "the file is no longer in the Recycle Bin").with_detail(format!(
+                    "wanted {want} deleted in {from_s}..={to_s}; same-named items: [{}]",
+                    seen.join(", ")
+                ))
+            })?;
         trash::os_limited::restore_all([item]).map_err(|e| trash_err("Recycle Bin restore", e))
     })?;
     found?;
@@ -97,6 +110,32 @@ pub(crate) fn unrecycle(path: &Path, from_s: i64, to_s: i64) -> Result<(), AppEr
         return Err(internal(format!("Recycle Bin restore did not bring back {}", path.display())));
     }
     Ok(())
+}
+
+/// `canonicalize` without the `\\?\` verbatim prefix (real on-disk case, long names); the path
+/// itself when it cannot be resolved.
+pub(crate) fn canonical(p: &Path) -> PathBuf {
+    match std::fs::canonicalize(p) {
+        Ok(c) => {
+            let s = c.to_string_lossy();
+            if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+                PathBuf::from(format!(r"\\{rest}"))
+            } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+                PathBuf::from(rest)
+            } else {
+                c
+            }
+        }
+        Err(_) => p.to_path_buf(),
+    }
+}
+
+/// Canonical parent folder + file name, for a file that may not exist right now.
+fn canonical_in_parent(p: &Path) -> PathBuf {
+    match (p.parent(), p.file_name()) {
+        (Some(dir), Some(name)) => canonical(dir).join(name),
+        _ => p.to_path_buf(),
+    }
 }
 
 fn now_s() -> i64 {

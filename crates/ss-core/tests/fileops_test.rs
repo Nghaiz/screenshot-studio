@@ -273,6 +273,33 @@ fn recycle_bin_then_undo_restores_file_and_row() {
     assert_eq!(state(&env, img.id), before, "file restored from the Recycle Bin, row with its tag");
 }
 
+/// The Recycle Bin records the canonical path. A root picked through a non-canonical spelling
+/// (an 8.3 short name such as `C:\Users\RUNNER~1\...` on the CI runner, or `..` segments here) must
+/// still find its item on undo (CI failure of PR #5).
+#[test]
+fn recycle_undo_with_a_non_canonical_root_path() {
+    let lib = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let real = lib.path().join("x");
+    std::fs::create_dir_all(&real).unwrap();
+    let f = common::fixtures::write_fixture(&real, 2); // a root-level fixture
+    let core = ss_core::AppCore::open(data.path(), Arc::new(OsFileAccess)).unwrap();
+    let odd = format!("{}\\x\\..\\x", lib.path().display());
+    core.add_library_root(Caller::Ui, AddLibraryRootReq { path: odd }).unwrap();
+    core.index_blocking(None, ss_core::IndexOptions { thumbs: false }, &ss_core::jobs::NullSink).unwrap();
+    let id = core.query_images(&ss_core::query::default_query(10)).unwrap().items[0].id;
+    let hash = blake3_of(&f.path);
+
+    let r = core.recycle_images(Caller::Ui, ImageIdsReq { image_ids: vec![id] }).unwrap();
+    assert_eq!((r.affected, r.failed.len()), (1, 0), "{r:?}");
+    assert!(!f.path.exists());
+    let u = core.undo(Caller::Ui, UndoReq { batch_id: r.batch_id }).unwrap();
+    assert!(u.failed.is_empty(), "undo failures: {:?}", u.failed);
+    assert_eq!(blake3_of(&f.path), hash);
+    assert_eq!(core.get_image(GetImageReq { id }).unwrap().summary.file_name, f.file_name);
+    drop(core);
+}
+
 #[test]
 fn organize_ops_then_undo() {
     let env = Env::new(6);
