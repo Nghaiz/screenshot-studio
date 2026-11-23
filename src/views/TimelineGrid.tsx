@@ -52,7 +52,7 @@ export function TimelineGrid({ scrollRef, width, height, list, thumbSize, gap, n
   });
 
   return (
-    <div style={{ height: v.getTotalSize(), position: "relative", margin: `0 ${gap}px` }}>
+    <div className="ss-square" style={{ height: v.getTotalSize(), position: "relative", margin: `0 ${gap}px` }}>
       {virtual.map((vr) => {
         const row = rows[vr.index];
         const style = { transform: `translateY(${vr.start}px)` };

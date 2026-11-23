@@ -26,6 +26,43 @@ to a kit. Newest first. One entry: what happened, why, what to do.
   machine). Measure memory on the real library, never on small fixtures. `memory-infra` dumps name the owner of the
   bytes; private-bytes totals alone do not.
 
+### Second pass: Chromium purges on idle, Blink keeps every encoded thumbnail, and WebView2's LOW target barely helps
+- **Idle purge (measured, no flags):** after visiting every thumbnail the tree falls from 751 to 596 MB within ~8 s
+  of no input, by itself. The first pass sampled right after the last screen, so it saw the peak only. `p2.mjs` now
+  samples for 10 s after each scroll and prints the peak and the after-idle value.
+- **What stays (dump after idle, after 2 forced GCs, after a simulated critical pressure signal; unchanged by all
+  three):** renderer `partition_alloc` allocated objects 214 MB. 5,662 grid thumbnails on disk average 33.6 KB
+  (186 MB in total), so Blink keeps the ENCODED bytes of every thumbnail it has shown. Only 27 `<img>` elements were
+  alive, all in the DOM (CDP `Runtime.queryObjects`), so neither React nor detached nodes hold them. `cc/image_memory`
+  read 456 MB through all of it while private bytes fell, so most of what it reports is not process private memory.
+- **`ICoreWebView2_19::SetMemoryUsageTargetLevel` (LOW), tried (webview2-com 0.39.1 + windows-core 0.62.2, the
+  versions Tauri links; `with_webview` -> `controller().CoreWebView2()?.cast::<ICoreWebView2_19>()`):** LOW held from
+  start: first screen 323-333 MB vs 376-381 MB, visit-all + idle 555 MB vs 596 MB; a 3 s LOW pulse during idle: the
+  same 555 MB. The ~40-50 MB comes off the GPU process only; the renderer's 214 MB stays. Fast scroll and its p95
+  (4.3 ms) did not change. Microsoft advises LOW for an inactive app, the only way it paid here was holding it on the
+  visible window, and it never got visit-all near 500 MB, so it was reverted (no new direct dependency).
+- **Do:** the remaining levers are the encoded size (#29 estimated 7.3 KB per 320 px thumbnail from 60 samples;
+  the real library averages 33.6 KB, 4.6x more) or loading thumbnails some way Blink does not retain. Both are
+  later-phase decisions; `p2.mjs` gates the plan's literal whole-library scroll (Deferred decision #31).
+
+### Square grid cells cropped and upscaled every thumbnail (`object-fit: cover`)
+- **Seen (real library, CDP, devicePixelRatio 1.5 on this laptop):** Grid at slider 320: cells 322 px square, median
+  on-screen scale 5.0 physical px per thumbnail px (wide screenshots: their middle cropped and blown up); at 400:
+  8.9. Masonry (box = image aspect): 1.5 at 320, which is the DPR alone. List: 0.6.
+- **Do:** square cells (Grid, Timeline) use `contain` over the cell surface (`.ss-square`, `src/index.css`). With it
+  the Grid's median is 0.89x at the owner's saved size 180, 1.51x at 320 (the DPR alone), 2.29x at 400. Sharper
+  than that at 320-400 needs a bigger thumbnail; the 1280 preview (204 KB encoded) in the grid would multiply the
+  retained encoded bytes above ~6x, so it was not used (Deferred decision #32).
+- **It costs memory:** A/B on one build, the old rule injected over CDP (`addStyleTag`), 2 runs each: gated scroll
+  peak 500/500 MB with `contain` vs 476/482 MB with `cover`; visit-all peak 798/795 vs 741/741 MB. Measure a CSS
+  change to image display against the memory gate before shipping it; an A/B over CDP needs no rebuild.
+
+### Windows Search finds the installed app (step 6, checked by the orchestrator with cua-driver, 2026-11-24 ~02:40)
+- Win+S, typed `Screenshot Studio`: "Best match: Screenshot Studio, App" with the new icon (top result, web
+  suggestions below). Enter launched it; `list_windows` showed `screenshot-studio.exe` with the window
+  "Screenshot Studio" and the single-instance helper window `dev.nghaiz.screenshotstudio-siw`; `verify_state`
+  (window exists) satisfied; closed with the UIA Close button. `p2.mjs` `start-menu` stays the automated proxy.
+
 ### A silent NSIS install writes a Desktop shortcut, and this Desktop is in OneDrive
 - **Seen:** Tauri's installer.nsi (tauri-bundler 2.10) creates `$DESKTOP\<product>.lnk` on every `/S` or `/P` install;
   `/NS` drops the Start Menu shortcut too. `[Environment]::GetFolderPath('Desktop')` is `C:\Users\Nghaiz\OneDrive\Desktop`.

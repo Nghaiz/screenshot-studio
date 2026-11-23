@@ -34,7 +34,7 @@ export function UniformGrid({ scrollRef, width, height, list, thumbSize, gap, na
   });
 
   return (
-    <div style={{ height: v.getTotalSize(), position: "relative", margin: `0 ${gap}px` }}>
+    <div className="ss-square" style={{ height: v.getTotalSize(), position: "relative", margin: `0 ${gap}px` }}>
       {rows.map((r) => {
         const start = r.index * g.cols;
         const end = Math.min(start + g.cols, list.total);

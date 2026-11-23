@@ -81,6 +81,9 @@ body {
 .ss-cell:focus-visible,
 .ss-cell[data-focused="true"] { box-shadow: 0 0 0 2px var(--ss-text), 0 0 0 4px var(--ss-accent); }
 .ss-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Square cells (Grid layout, Timeline) show the whole screenshot over the cell surface: cover cropped the middle of
+   a 320 px long-edge thumbnail and upscaled it (wide shots 5x on screen at DPR 1.5). Deferred decision #32. */
+.ss-square .ss-cell img { object-fit: contain; }
 
 .ss-shimmer {
   background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--ss-text) 10%, transparent) 50%, transparent 80%);

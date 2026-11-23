@@ -24,9 +24,12 @@
 //   single-instance  a second launch exits by itself and leaves exactly one screenshot-studio.exe (the first one)
 //   close            WM_CLOSE on the window (CloseMainWindow) ends the app and its WebView2 processes within 10 s
 //   memory           app + WebView2 private bytes <= 500 MB after scrolling the whole real library (Deferred decision
-//                    #31): a 10 s top-to-bottom scroll (lib/cdp.mjs scrollFrames), then a page-by-page pass that waits
-//                    on each screen until its thumbnails are loaded, so every loadable thumbnail is decoded once.
-//                    Also FAIL when that pass did not visit every item or left more than 1% of them unloaded
+//                    #31): a 10 s top-to-bottom scroll (lib/cdp.mjs scrollFrames, the method 1.4 measured 1,208 MB
+//                    with), then IDLE_MS without input; the PEAK of the samples from the end of the scroll to the end
+//                    of the idle is gated. FAIL also when the scroll did not reach the bottom.
+//                    INFO memory-visit-all (measured, not gated, orchestrator decision in Deferred decision #31): a
+//                    page-by-page pass that waits on each screen until its thumbnails are loaded, so every loadable
+//                    thumbnail is decoded once; its peak and its value after IDLE_MS
 //   webview-data     the WebView2 browser runs with --user-data-dir under <data dir>\webview, that folder holds the
 //                    EBWebView profile, and %LOCALAPPDATA%\dev.nghaiz.screenshotstudio holds no EBWebView
 //
@@ -56,6 +59,8 @@ const SCROLL_MS = 10_000;
 const PAGE_SETTLE_MS = 200; // > src/lib/defaults.ts THUMB_SETTLE_MS (150): a cell gets its <img> only after that
 const PAGE_MAX_WAIT_MS = 2000;
 const MAX_UNLOADED_SHARE = 0.01;
+const IDLE_MS = 10_000; // no input after a scroll: the last screen's thumbnails load, Chromium's idle purge runs
+const SAMPLE_GAP_MS = 500; // between memory samples (each Win32_Process query itself takes ~1 s)
 
 const results = [];
 function report(ok, check, value) {
@@ -347,6 +352,21 @@ function pageThrough(page) {
   );
 }
 
+/**
+ * Samples the app tree's memory from now until IDLE_MS have passed with no input (the caller just finished a
+ * scroll). Returns { peak, last, count }: `peak` is the sample with the most private bytes, `last` the final one.
+ */
+async function idleSamples(page, pid) {
+  const end = Date.now() + IDLE_MS;
+  const samples = [treeMemory(pid)];
+  while (Date.now() < end) {
+    await page.waitForTimeout(Math.min(SAMPLE_GAP_MS, Math.max(0, end - Date.now())));
+    samples.push(treeMemory(pid));
+  }
+  const peak = samples.reduce((a, b) => (b.privateMB > a.privateMB ? b : a));
+  return { peak, last: samples.at(-1), count: samples.length };
+}
+
 /** Returns the WebView2 `--user-data-dir` seen while the app ran (for webview-data), or null. */
 async function checkMemory() {
   let app;
@@ -361,19 +381,20 @@ async function checkMemory() {
     const idle = treeMemory(app.pid);
     console.log(`INFO memory-idle processes=${idle.processes} workingSet=${idle.workingSetMB}MB private=${idle.privateMB}MB (first screen, ${items} items)`);
     const { frames, scrolledPx, maxPx } = await scrollFrames(cdp.page, SCROLL_MS);
-    const fast = treeMemory(app.pid);
-    console.log(
-      `INFO memory-fast-scroll private=${fast.privateMB}MB workingSet=${fast.workingSetMB}MB p50=${percentile(frames, 50).toFixed(2)}ms p95=${percentile(frames, 95).toFixed(2)}ms scrolled=${Math.round(scrolledPx)}/${Math.round(maxPx)}px`,
+    const scroll = await idleSamples(cdp.page, app.pid);
+    const reachedBottom = Math.round(scrolledPx) >= Math.round(maxPx);
+    report(
+      scroll.peak.privateMB <= MEMORY_MAX_MB && reachedBottom,
+      "memory",
+      `peak=${scroll.peak.privateMB}MB (max ${MEMORY_MAX_MB}MB) afterIdle=${scroll.last.privateMB}MB workingSetPeak=${scroll.peak.workingSetMB}MB samples=${scroll.count}/${IDLE_MS / 1000}s processes=${scroll.peak.processes} (${scroll.peak.names}) items=${items} scrolled=${Math.round(scrolledPx)}/${Math.round(maxPx)}px p50=${percentile(frames, 50).toFixed(2)}ms p95=${percentile(frames, 95).toFixed(2)}ms`,
     );
     const t0 = Date.now();
     const pass = await pageThrough(cdp.page);
-    const mem = treeMemory(app.pid);
+    const visit = await idleSamples(cdp.page, app.pid);
     const unloaded = pass.seen - pass.loaded - pass.icons;
     const covered = pass.seen === items && unloaded <= items * MAX_UNLOADED_SHARE;
-    report(
-      mem.privateMB <= MEMORY_MAX_MB && covered,
-      "memory",
-      `private=${mem.privateMB}MB (max ${MEMORY_MAX_MB}MB) workingSet=${mem.workingSetMB}MB processes=${mem.processes} (${mem.names}) items=${items} visited=${pass.seen} thumbsLoaded=${pass.loaded} noThumb=${pass.icons} unloaded=${unloaded} pages=${pass.pages} waitedOut=${pass.waitedOut} pass=${Math.round((Date.now() - t0) / 1000)}s`,
+    console.log(
+      `INFO memory-visit-all peak=${visit.peak.privateMB}MB afterIdle=${visit.last.privateMB}MB (not gated, Deferred decision #31) covered=${covered} items=${items} visited=${pass.seen} thumbsLoaded=${pass.loaded} noThumb=${pass.icons} unloaded=${unloaded} pages=${pass.pages} waitedOut=${pass.waitedOut} pass=${Math.round((Date.now() - t0) / 1000)}s`,
     );
   } catch (e) {
     report(false, "memory", e.message.split("\n")[0]);
