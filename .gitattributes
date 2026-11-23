@@ -1,0 +1,5 @@
+# LF everywhere: contract_test.rs byte-compares generated bindings, and Git for Windows ships core.autocrlf=true.
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.icns binary

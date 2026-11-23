@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":2,"result":{"results":[{"imageId":101,"text":"Xin chào thế giới\\nHello world","lines":[{"text":"Xin chào thế giới","box":[12.0,8.5,240.0,32.0],"score":0.97},{"text":"Hello world","box":[12.0,40.0,180.5,64.0],"score":0.99}],"error":null},{"imageId":102,"text":"","lines":[],"error":{"code":"unreadable","message":"cannot decode image"}}]}}

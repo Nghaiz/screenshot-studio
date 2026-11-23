@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":5,"method":"classify.zeroShot","params":{"items":[{"imageId":101,"path":"C:\\Users\\me\\Pictures\\Screenshots\\a.png"}],"labels":["code","chat","receipt","game"]}}

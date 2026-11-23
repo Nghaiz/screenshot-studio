@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":5,"result":{"results":[{"imageId":101,"scores":[{"label":"code","score":0.81},{"label":"chat","score":0.12},{"label":"receipt","score":0.05},{"label":"game","score":0.02}],"error":null}]}}

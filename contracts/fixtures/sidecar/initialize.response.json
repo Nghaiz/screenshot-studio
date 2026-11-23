@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"sidecarVersion":"0.1.0","capabilities":["ocr","embed","classify","color","pii"],"device":"cuda","embedModel":"ViT-B-16-SigLIP-i18n-256","embedDim":768}}

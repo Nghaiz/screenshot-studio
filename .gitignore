@@ -1,0 +1,14 @@
+# Build output
+target/
+dist/
+node_modules/
+src-tauri/gen/schemas/
+
+# Test data and local state
+tests/fixtures/out/
+.venv/
+*.sqlite*
+__pycache__/
+.pytest_cache/
+
+# crates/ss-core/bindings/ is NOT ignored: generated bindings are committed (contracts.md).

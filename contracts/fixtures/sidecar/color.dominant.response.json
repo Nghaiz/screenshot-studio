@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":6,"result":{"results":[{"imageId":101,"rgb":"#1E1E2E","palette":["#1E1E2E","#CBA6F7","#F38BA8"],"error":null},{"imageId":104,"rgb":null,"palette":[],"error":{"code":"unsupported","message":"format not supported"}}]}}

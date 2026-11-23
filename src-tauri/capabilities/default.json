@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "contract-tauri-ipc.md § Capabilities. No fs:* and no shell:* for the webview: all file work goes through commands.",
+  "windows": ["main", "tray-recent"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-write-image",
+    "opener:allow-reveal-item-in-dir",
+    "opener:allow-open-path",
+    "notification:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled",
+    "drag:default"
+  ]
+}

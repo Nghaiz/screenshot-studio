@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":7,"method":"pii.detect","params":{"imageId":101,"path":"C:\\Users\\me\\Pictures\\Screenshots\\a.png","lines":[{"text":"mail me at someone@example.com","box":[10.0,10.0,300.0,30.0]}]}}

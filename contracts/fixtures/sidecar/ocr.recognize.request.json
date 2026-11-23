@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":2,"method":"ocr.recognize","params":{"items":[{"imageId":101,"path":"C:\\Users\\me\\Pictures\\Screenshots\\Screenshot 2026-11-20 101500.png"},{"imageId":102,"path":"C:\\Users\\me\\Pictures\\Screenshots\\broken.png"}]}}

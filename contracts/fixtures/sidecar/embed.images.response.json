@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":3,"result":{"model":"ViT-B-16-SigLIP-i18n-256","dim":4,"results":[{"imageId":101,"vector":"AAAAPwAAAD8AAAA/AAAAPw==","error":null},{"imageId":103,"vector":null,"error":{"code":"timeout","message":"image load timed out"}}]}}

@@ -1,0 +1,33 @@
+[package]
+name = "ss-core"
+description = "Screenshot Studio catalog, indexer, contracts and the ssctl CLI"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "ssctl"
+path = "src/bin/ssctl.rs"
+
+[dependencies]
+blake3.workspace = true
+fast_image_resize.workspace = true
+image.workspace = true
+image_hasher.workspace = true
+notify.workspace = true
+notify-debouncer-full.workspace = true
+printpdf.workspace = true
+rayon.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+trash.workspace = true
+ts-rs.workspace = true
+walkdir.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+jsonschema.workspace = true
+tempfile.workspace = true

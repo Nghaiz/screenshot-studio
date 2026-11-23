@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"device":"auto","languages":["vi","en"],"embedModel":"ViT-B-16-SigLIP-i18n-256","ocrEngine":"rapidocr"}}

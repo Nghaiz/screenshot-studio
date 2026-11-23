@@ -1,0 +1,334 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://screenshotstudio.local/contracts/sidecar-jsonrpc.schema.json",
+  "title": "Screenshot Studio sidecar JSON-RPC 2.0 protocol, version 1",
+  "description": "Transcription of plans/261123-screenshot-studio/contract-sidecar-jsonrpc.md. One line on the pipe is one Message. A response carries no method name, so validate its `result` against the `<Method>Result` def of the request it answers.",
+  "$ref": "#/$defs/Message",
+  "$defs": {
+    "Message": {
+      "oneOf": [
+        { "$ref": "#/$defs/Request" },
+        { "$ref": "#/$defs/Response" },
+        { "$ref": "#/$defs/ErrorResponse" },
+        { "$ref": "#/$defs/Notification" }
+      ]
+    },
+    "JsonRpcVersion": { "const": "2.0" },
+    "RequestId": { "type": "integer", "minimum": 0 },
+    "Request": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "$ref": "#/$defs/JsonRpcVersion" },
+        "id": { "$ref": "#/$defs/RequestId" },
+        "method": { "enum": ["initialize", "ocr.recognize", "embed.images", "embed.text", "classify.zeroShot", "color.dominant", "pii.detect", "shutdown"] },
+        "params": { "type": "object" }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        { "if": { "properties": { "method": { "const": "initialize" } } }, "then": { "properties": { "params": { "$ref": "#/$defs/InitializeParams" } } } },
+        { "if": { "properties": { "method": { "const": "ocr.recognize" } } }, "then": { "properties": { "params": { "$ref": "#/$defs/OcrRecognizeParams" } } } },
+        { "if": { "properties": { "method": { "const": "embed.images" } } }, "then": { "properties": { "params": { "$ref": "#/$defs/EmbedImagesParams" } } } },
+        { "if": { "properties": { "method": { "const": "embed.text" } } }, "then": { "properties": { "params": { "$ref": "#/$defs/EmbedTextParams" } } } },
+        { "if": { "properties": { "method": { "const": "classify.zeroShot" } } }, "then": { "properties": { "params": { "$ref": "#/$defs/ClassifyZeroShotParams" } } } },
+        { "if": { "properties": { "method": { "const": "color.dominant" } } }, "then": { "properties": { "params": { "$ref": "#/$defs/ColorDominantParams" } } } },
+        { "if": { "properties": { "method": { "const": "pii.detect" } } }, "then": { "properties": { "params": { "$ref": "#/$defs/PiiDetectParams" } } } },
+        { "if": { "properties": { "method": { "const": "shutdown" } } }, "then": { "properties": { "params": { "$ref": "#/$defs/EmptyObject" } } } }
+      ]
+    },
+    "Response": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "result"],
+      "properties": {
+        "jsonrpc": { "$ref": "#/$defs/JsonRpcVersion" },
+        "id": { "$ref": "#/$defs/RequestId" },
+        "result": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "error"],
+      "properties": {
+        "jsonrpc": { "$ref": "#/$defs/JsonRpcVersion" },
+        "id": { "oneOf": [{ "$ref": "#/$defs/RequestId" }, { "type": "null" }] },
+        "error": { "$ref": "#/$defs/RpcError" }
+      },
+      "additionalProperties": false
+    },
+    "RpcError": {
+      "type": "object",
+      "required": ["code", "message", "data"],
+      "properties": {
+        "code": { "enum": [-32700, -32600, -32601, -32602, -32000, -32001, -32002, -32003, -32004] },
+        "message": { "type": "string" },
+        "data": {
+          "type": "object",
+          "required": ["detail"],
+          "properties": { "detail": { "type": ["string", "null"] } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "Notification": {
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "properties": {
+        "jsonrpc": { "$ref": "#/$defs/JsonRpcVersion" },
+        "method": { "enum": ["progress", "$/cancel"] },
+        "params": { "type": "object" }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        { "if": { "properties": { "method": { "const": "progress" } } }, "then": { "properties": { "params": { "$ref": "#/$defs/ProgressParams" } } } },
+        { "if": { "properties": { "method": { "const": "$/cancel" } } }, "then": { "properties": { "params": { "$ref": "#/$defs/CancelParams" } } } }
+      ]
+    },
+    "ProgressParams": {
+      "type": "object",
+      "required": ["requestId", "done", "total"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/RequestId" },
+        "done": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "CancelParams": {
+      "type": "object",
+      "required": ["id"],
+      "properties": { "id": { "$ref": "#/$defs/RequestId" } },
+      "additionalProperties": false
+    },
+    "EmptyObject": { "type": "object", "additionalProperties": false },
+
+    "ImageId": { "type": "integer" },
+    "Rgb": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+    "Box": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 },
+    "Vector": { "type": "string", "contentEncoding": "base64", "description": "base64 of little-endian float32, L2-normalized" },
+    "Capability": { "enum": ["ocr", "embed", "classify", "color", "pii"] },
+    "ImageItem": {
+      "type": "object",
+      "required": ["imageId", "path"],
+      "properties": { "imageId": { "$ref": "#/$defs/ImageId" }, "path": { "type": "string", "minLength": 1 } },
+      "additionalProperties": false
+    },
+    "RpcItemError": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": { "code": { "enum": ["unreadable", "unsupported", "timeout", "internal"] }, "message": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "NullableItemError": { "oneOf": [{ "$ref": "#/$defs/RpcItemError" }, { "type": "null" }] },
+    "Score": {
+      "type": "object",
+      "required": ["label", "score"],
+      "properties": { "label": { "type": "string" }, "score": { "type": "number" } },
+      "additionalProperties": false
+    },
+
+    "InitializeParams": {
+      "type": "object",
+      "required": ["protocolVersion", "device", "languages", "embedModel", "ocrEngine"],
+      "properties": {
+        "protocolVersion": { "const": 1 },
+        "device": { "enum": ["auto", "cuda", "cpu"] },
+        "languages": { "type": "array", "items": { "type": "string" } },
+        "embedModel": { "type": "string" },
+        "ocrEngine": { "const": "rapidocr" }
+      },
+      "additionalProperties": false
+    },
+    "InitializeResult": {
+      "type": "object",
+      "required": ["protocolVersion", "sidecarVersion", "capabilities", "device", "embedModel", "embedDim"],
+      "properties": {
+        "protocolVersion": { "const": 1 },
+        "sidecarVersion": { "type": "string" },
+        "capabilities": { "type": "array", "items": { "$ref": "#/$defs/Capability" }, "uniqueItems": true },
+        "device": { "enum": ["cuda", "cpu"] },
+        "embedModel": { "type": "string" },
+        "embedDim": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "OcrRecognizeParams": {
+      "type": "object",
+      "required": ["items"],
+      "properties": { "items": { "type": "array", "items": { "$ref": "#/$defs/ImageItem" }, "maxItems": 16 } },
+      "additionalProperties": false
+    },
+    "OcrLine": {
+      "type": "object",
+      "required": ["text", "box", "score"],
+      "properties": { "text": { "type": "string" }, "box": { "$ref": "#/$defs/Box" }, "score": { "type": "number" } },
+      "additionalProperties": false
+    },
+    "OcrRecognizeResult": {
+      "type": "object",
+      "required": ["results"],
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["imageId", "text", "lines", "error"],
+            "properties": {
+              "imageId": { "$ref": "#/$defs/ImageId" },
+              "text": { "type": "string" },
+              "lines": { "type": "array", "items": { "$ref": "#/$defs/OcrLine" } },
+              "error": { "$ref": "#/$defs/NullableItemError" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "EmbedImagesParams": {
+      "type": "object",
+      "required": ["items"],
+      "properties": { "items": { "type": "array", "items": { "$ref": "#/$defs/ImageItem" }, "maxItems": 32 } },
+      "additionalProperties": false
+    },
+    "EmbedImagesResult": {
+      "type": "object",
+      "required": ["model", "dim", "results"],
+      "properties": {
+        "model": { "type": "string" },
+        "dim": { "type": "integer", "minimum": 1 },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["imageId", "vector", "error"],
+            "properties": {
+              "imageId": { "$ref": "#/$defs/ImageId" },
+              "vector": { "oneOf": [{ "$ref": "#/$defs/Vector" }, { "type": "null" }] },
+              "error": { "$ref": "#/$defs/NullableItemError" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "EmbedTextParams": {
+      "type": "object",
+      "required": ["texts"],
+      "properties": { "texts": { "type": "array", "items": { "type": "string" }, "maxItems": 16 } },
+      "additionalProperties": false
+    },
+    "EmbedTextResult": {
+      "type": "object",
+      "required": ["model", "dim", "vectors"],
+      "properties": {
+        "model": { "type": "string" },
+        "dim": { "type": "integer", "minimum": 1 },
+        "vectors": { "type": "array", "items": { "$ref": "#/$defs/Vector" } }
+      },
+      "additionalProperties": false
+    },
+    "ClassifyZeroShotParams": {
+      "type": "object",
+      "required": ["items", "labels"],
+      "properties": {
+        "items": { "type": "array", "items": { "$ref": "#/$defs/ImageItem" } },
+        "labels": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "ClassifyZeroShotResult": {
+      "type": "object",
+      "required": ["results"],
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["imageId", "scores", "error"],
+            "properties": {
+              "imageId": { "$ref": "#/$defs/ImageId" },
+              "scores": { "type": "array", "items": { "$ref": "#/$defs/Score" } },
+              "error": { "$ref": "#/$defs/NullableItemError" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ColorDominantParams": {
+      "type": "object",
+      "required": ["items"],
+      "properties": { "items": { "type": "array", "items": { "$ref": "#/$defs/ImageItem" } } },
+      "additionalProperties": false
+    },
+    "ColorDominantResult": {
+      "type": "object",
+      "required": ["results"],
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["imageId", "rgb", "palette", "error"],
+            "properties": {
+              "imageId": { "$ref": "#/$defs/ImageId" },
+              "rgb": { "oneOf": [{ "$ref": "#/$defs/Rgb" }, { "type": "null" }] },
+              "palette": { "type": "array", "items": { "$ref": "#/$defs/Rgb" } },
+              "error": { "$ref": "#/$defs/NullableItemError" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PiiDetectParams": {
+      "type": "object",
+      "required": ["imageId", "path", "lines"],
+      "properties": {
+        "imageId": { "$ref": "#/$defs/ImageId" },
+        "path": { "type": "string", "minLength": 1 },
+        "lines": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["text", "box"],
+                "properties": { "text": { "type": "string" }, "box": { "$ref": "#/$defs/Box" } },
+                "additionalProperties": false
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "PiiDetectResult": {
+      "type": "object",
+      "required": ["findings"],
+      "properties": {
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "text", "box"],
+            "properties": {
+              "kind": { "enum": ["email", "phone", "url", "card"] },
+              "text": { "type": "string" },
+              "box": { "$ref": "#/$defs/Box" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ShutdownResult": { "$ref": "#/$defs/EmptyObject" }
+  }
+}
