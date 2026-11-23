@@ -2,7 +2,9 @@
 // Command names and req/res types come from the generated `@bindings/commands` (never hand-mirrored).
 import { invoke } from "@tauri-apps/api/core";
 import type { CommandMap } from "@bindings/commands";
+import type { AppError } from "@bindings/AppError";
 import type { EditMode } from "@bindings/EditMode";
+import type { ErrorKind } from "@bindings/ErrorKind";
 import type { ImageFormat } from "@bindings/ImageFormat";
 import type { ImageSummary } from "@bindings/ImageSummary";
 
@@ -34,4 +36,25 @@ export function saveEditedImage(png: Uint8Array, h: SaveEditedImageHeaders): Pro
   };
   if (h.quality !== null) headers["x-quality"] = String(h.quality);
   return invoke("save_edited_image", png, { headers });
+}
+
+const ERROR_KINDS: readonly ErrorKind[] = [
+  "notFound", "io", "db", "invalidArgument", "conflict", "sidecarUnavailable", "cancelled",
+  "permissionDenied", "protectedRoot", "confirmationRequired", "internal",
+];
+
+export function isAppError(e: unknown): e is AppError {
+  if (!e || typeof e !== "object") return false;
+  const o = e as Record<string, unknown>;
+  return typeof o.kind === "string" && (ERROR_KINDS as readonly string[]).includes(o.kind) && typeof o.message === "string";
+}
+
+/**
+ * Maps any rejection to the contract envelope (rule 5). A non-envelope rejection (a Tauri transport error,
+ * a JS exception) becomes `internal` with its text kept in `detail`, so nothing is swallowed.
+ */
+export function toAppError(e: unknown): AppError {
+  if (isAppError(e)) return { kind: e.kind, message: e.message, detail: e.detail ?? null };
+  const text = e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
+  return { kind: "internal", message: "unexpected IPC failure", detail: text };
 }

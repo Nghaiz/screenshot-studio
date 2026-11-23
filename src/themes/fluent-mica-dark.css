@@ -1,0 +1,18 @@
+/* Theme `fluent-mica-dark`: Windows 11 dark Mica, neutral tint, calm motion. */
+[data-theme="fluent-mica-dark"] {
+  --ss-bg:
+    radial-gradient(60rem 40rem at 0% 0%, rgb(56 78 120 / 0.45), transparent 60%),
+    radial-gradient(50rem 36rem at 100% 100%, rgb(76 56 110 / 0.40), transparent 60%),
+    #1c1c1f;
+  --ss-surface: rgb(40 40 44 / 0.66);
+  --ss-surface-blur: 30px;
+  --ss-text: #f3f3f3;
+  --ss-muted: #a8a8ad;
+  --ss-accent: #4cc2ff;
+  --ss-accent-contrast: #001a2b;
+  --ss-border: rgb(255 255 255 / 0.08);
+  --ss-radius: 8px;
+  --ss-shadow: 0 8px 28px rgb(0 0 0 / 0.40);
+  --ss-motion-scale: 0.9;
+  color-scheme: dark;
+}

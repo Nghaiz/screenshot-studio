@@ -1,0 +1,18 @@
+/* Theme `sunset`: warm orange to violet dusk, glass panels, relaxed motion. */
+[data-theme="sunset"] {
+  --ss-bg:
+    radial-gradient(50rem 30rem at 50% 115%, rgb(255 138 76 / 0.55), transparent 60%),
+    radial-gradient(40rem 30rem at 0% 0%, rgb(190 24 93 / 0.40), transparent 60%),
+    linear-gradient(180deg, #1e0b2e 0%, #3a1038 55%, #5a1e2a 100%);
+  --ss-surface: rgb(40 14 40 / 0.50);
+  --ss-surface-blur: 18px;
+  --ss-text: #fff1e6;
+  --ss-muted: #d7a99a;
+  --ss-accent: #ff8a4c;
+  --ss-accent-contrast: #2a0d00;
+  --ss-border: rgb(255 170 120 / 0.22);
+  --ss-radius: 16px;
+  --ss-shadow: 0 20px 50px rgb(30 0 20 / 0.45);
+  --ss-motion-scale: 1.1;
+  color-scheme: dark;
+}

@@ -1,0 +1,18 @@
+/* Theme `cyberpunk`: hard yellow-on-black with hot pink, sharp corners, snappy motion. */
+[data-theme="cyberpunk"] {
+  --ss-bg:
+    repeating-linear-gradient(0deg, rgb(255 255 255 / 0.025) 0 1px, transparent 1px 4px),
+    radial-gradient(40rem 26rem at 90% 10%, rgb(255 0 128 / 0.30), transparent 60%),
+    linear-gradient(135deg, #0a0a0a 0%, #14100a 60%, #1d0717 100%);
+  --ss-surface: rgb(18 16 10 / 0.92);
+  --ss-surface-blur: 0px;
+  --ss-text: #fdf6c3;
+  --ss-muted: #b9ad6a;
+  --ss-accent: #fcee0a;
+  --ss-accent-contrast: #0a0a0a;
+  --ss-border: rgb(252 238 10 / 0.45);
+  --ss-radius: 3px;
+  --ss-shadow: 4px 4px 0 rgb(255 0 128 / 0.55);
+  --ss-motion-scale: 0.7;
+  color-scheme: dark;
+}

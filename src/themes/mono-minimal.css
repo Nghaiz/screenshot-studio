@@ -1,0 +1,17 @@
+/* Theme `mono-minimal`: greyscale, solid panels, no blur, quick restrained motion. */
+[data-theme="mono-minimal"] {
+  --ss-bg:
+    radial-gradient(60rem 40rem at 50% -20%, rgb(255 255 255 / 0.06), transparent 60%),
+    linear-gradient(180deg, #111111 0%, #0a0a0a 100%);
+  --ss-surface: #171717;
+  --ss-surface-blur: 0px;
+  --ss-text: #f5f5f5;
+  --ss-muted: #8a8a8a;
+  --ss-accent: #e5e5e5;
+  --ss-accent-contrast: #0a0a0a;
+  --ss-border: #2a2a2a;
+  --ss-radius: 6px;
+  --ss-shadow: none;
+  --ss-motion-scale: 0.6;
+  color-scheme: dark;
+}

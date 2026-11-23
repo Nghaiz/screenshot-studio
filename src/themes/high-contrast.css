@@ -1,0 +1,15 @@
+/* Theme `high-contrast`: black, white and yellow, thick borders, no blur, minimal motion. */
+[data-theme="high-contrast"] {
+  --ss-bg: linear-gradient(180deg, #000000 0%, #000000 100%);
+  --ss-surface: #000000;
+  --ss-surface-blur: 0px;
+  --ss-text: #ffffff;
+  --ss-muted: #e0e0e0;
+  --ss-accent: #ffff00;
+  --ss-accent-contrast: #000000;
+  --ss-border: #ffffff;
+  --ss-radius: 4px;
+  --ss-shadow: none;
+  --ss-motion-scale: 0.4;
+  color-scheme: dark;
+}

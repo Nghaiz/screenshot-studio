@@ -1,0 +1,18 @@
+/* Theme `midnight-neon`: deep navy glass, magenta + cyan neon, lively motion. Contract: design-intent.md. */
+[data-theme="midnight-neon"] {
+  --ss-bg:
+    radial-gradient(48rem 32rem at 0% 0%, rgb(236 72 153 / 0.30), transparent 60%),
+    radial-gradient(44rem 30rem at 100% 100%, rgb(34 211 238 / 0.28), transparent 60%),
+    linear-gradient(160deg, #070716 0%, #0d0b26 55%, #050510 100%);
+  --ss-surface: rgb(20 18 48 / 0.55);
+  --ss-surface-blur: 20px;
+  --ss-text: #f1edff;
+  --ss-muted: #a59cd3;
+  --ss-accent: #f472b6;
+  --ss-accent-contrast: #1a0414;
+  --ss-border: rgb(244 114 182 / 0.28);
+  --ss-radius: 14px;
+  --ss-shadow: 0 0 0 1px rgb(34 211 238 / 0.10), 0 18px 50px rgb(236 72 153 / 0.18);
+  --ss-motion-scale: 1.1;
+  color-scheme: dark;
+}
