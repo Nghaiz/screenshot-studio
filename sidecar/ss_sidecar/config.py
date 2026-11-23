@@ -35,9 +35,21 @@ EMBED_MODELS = {
 EMBED_BATCH = 8  # images per forward pass inside one embed.images request (progress + cancel granularity)
 CLASSIFY_TEMPLATE = "a screenshot of {}"  # zero-shot prompt per label; scores are a softmax over the labels
 
-# OCR: RapidOCR defaults (PP-OCRv6 small det/rec, bundled in the wheel; multilingual incl. vi + en), on CPU
-# onnxruntime (Deferred decision #19). Its own logger writes to stderr; keep it to warnings.
-OCR_LOG_LEVEL = "warning"
+# OCR pipeline (Deferred decision #19), data, overridable with SS_SIDECAR_OCR_PIPELINE:
+#   "rapidocr+easyocr" - RapidOCR (PP-OCRv6 det + rec, CPU onnxruntime) reads each line; EasyOCR latin_g2 (vi + en,
+#                        torch on the initialize device) re-reads the same boxes to restore the tone-marked Vietnamese
+#                        letters PP-OCRv6 cannot emit. Default since phase 3.1b.
+#   "rapidocr"         - RapidOCR alone; drops those 44 letters (x2 cases).
+ENV_OCR_PIPELINE = "SS_SIDECAR_OCR_PIPELINE"
+DEFAULT_OCR_PIPELINE = "rapidocr+easyocr"
+OCR_PIPELINES = ("rapidocr+easyocr", "rapidocr")
+EASYOCR_LANGS = ["vi", "en"]
+EASYOCR_MODEL_SUBDIR = "easyocr"  # under HF_HOME, next to the SigLIP weights
+OCR_REC_BATCH = 8  # line crops per EasyOCR forward pass (GPU); 2-5x faster than 1 on the spike screenshots
+# Below this difflib ratio the two readings of a line are not the same text: no segment merge (ocr_easy.py).
+# Measured: same line with tone letters dropped ~0.9; a derailed RapidOCR reading ~0.2.
+OCR_MERGE_MIN_RATIO = 0.6
+OCR_LOG_LEVEL = "warning"  # RapidOCR's own logger (stderr)
 
 # Dominant colour: downscale long edge, palette size.
 COLOR_SAMPLE_EDGE = 128
@@ -52,3 +64,16 @@ def schema_path() -> Path:
 
 def fake_engines() -> bool:
     return os.environ.get(ENV_FAKE_ENGINES) == "1"
+
+
+def ocr_pipeline() -> str:
+    name = os.environ.get(ENV_OCR_PIPELINE) or DEFAULT_OCR_PIPELINE
+    if name not in OCR_PIPELINES:
+        raise ValueError(f"{ENV_OCR_PIPELINE}={name!r}; expected one of {OCR_PIPELINES}")
+    return name
+
+
+def model_dir(subdir: str) -> Path:
+    """Model cache under HF_HOME (the app sets it; huggingface_hub's own default otherwise)."""
+    home = os.environ.get("HF_HOME") or str(Path.home() / ".cache" / "huggingface")
+    return Path(home) / subdir

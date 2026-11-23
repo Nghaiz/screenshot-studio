@@ -73,6 +73,18 @@ Re-score (phase 3.1, 2026-11-24, `node scripts/accept/lane-tests.mjs sidecar/tes
   against `contracts/sidecar-jsonrpc.schema.json` at run time, so the bundled app (3.4/4.3) must ship that file or set
   `SS_CONTRACT_SCHEMA`. OCR forecast row: English and Vietnamese without tone-marked letters PASS (`test_ocr.py`);
   words with them cannot be found. P3 confidence unchanged at 45%.
+Re-score (phase 3.1b, 2026-11-24, same Accept, 3/3 PASS, 42 + 6 + 5 tests): Vietnamese OCR gap closed (Deferred decision #19).
+- Same 5 hand-transcribed Vietnamese screenshots (re-copied read-only to %TEMP%, deleted after), line-matched
+  character accuracy after NFC: RapidOCR alone 87.4% (tone-marked letters 0/219) -> `rapidocr+easyocr` **96.8%**
+  (206/219 on CPU, 205/219 on CUDA). EasyOCR alone over RapidOCR's boxes: 96.0%; EasyOCR's own detector: 93.0%.
+- English, no regression: a hand-transcribed English settings screenshot 100% -> 100% (347 chars); generated English
+  lines 100%; 8 URL/email/version/file-name lines in 2 fonts x 3 sizes 48/48 exact (EasyOCR alone: 34/48).
+  Generated tone-letter lines (`test_ocr.py`): 0/29 -> 29/29 letters, every line verbatim.
+- Time per image on the 5 (after warm-up): RapidOCR alone 0.74 s; pipeline 1.48 s on CPU, 0.88 s with EasyOCR on CUDA
+  (the default whenever `device` resolves to cuda). About 1.5-2.6 h for 6,260 images.
+- Cost: `easyocr` + its deps (scipy, scikit-image, python-bidi, ninja) in the venv; `latin_g2.pth` 15 MB in
+  `<HF_HOME>\easyocr` (`--prefetch`; without it `ocr` is disabled with a named reason). OCR forecast row: Vietnamese
+  tone-marked words now PASS in `test_ocr.py`; the real-library search check stays with 3.4.
 Not checked: ts-rs 12 `#[ts(type)]` behaviour on Option/Vec fields (from library knowledge; contract_test bans `bigint` to catch it); Tauri raw-body IPC + headers API; `tauri-plugin-drag` version; Rust/Tauri build on this machine (Rust not installed yet); WebView2 CDP attach in a dev build; RapidOCR Vietnamese; OneDrive Files On-Demand state of the 5,604 files (how many are cloud-only); SigLIP i18n quality on Vietnamese queries; NSIS `/D=` with currentUser mode on D:.
 
 ## Finish ETA
@@ -282,7 +294,7 @@ Ordered irreversible / costliest first.
 | 16 | Text search | LIKE / FTS5 | FTS5 `unicode61 remove_diacritics 2` over file name + OCR + note | diacritic-insensitive is in the design | - |
 | 17 | Vector storage | vector DB / SQLite BLOB + brute force | float32 BLOB in SQLite, cosine in Rust | 5,604 x 768 floats is ~17 MB, brute force is ms | add an index later if > 100k |
 | 18 | Duplicate detection location | Python / Rust | Rust (`blake3` exact + `image_hasher` dHash, Hamming <= 6 default) | works without the sidecar | constant `DUP_HAMMING_DEFAULT` |
-| 19 | AI defaults | - | OCR RapidOCR on CPU onnxruntime (GPU opt-in); embeddings `ViT-B-16-SigLIP-i18n-256` on `device: auto`. **Phase 3.1 spike (2026-11-24):** RapidOCR 3.10.0 defaults (PP-OCRv6 small det + rec, multilingual) kept: 87.4% character accuracy >= the 85% kill line, so PaddleOCR was not installed. Known gap, owner's call: the PP-OCRv6 dictionary has no tone-marked Vietnamese letters (44, e.g. `ế ậ ờ ữ ỵ`), so they vanish from OCR text (`điều kiện` -> `điu kin`) and FTS cannot find those words; pinned by `test_vietnamese_tone_letters_known_gap` | multilingual (vi) + fits 8 GB VRAM; CPU OCR avoids a cuDNN install. Spike numbers: Re-score (phase 3.1). `latin_PP-OCRv5` rec was tried and is worse (no `đ ư ơ`); PaddleOCR ships the same model families, so the design's fallback does not close the gap | sidecar config (`ss_sidecar/config.py`, `engines/ocr_rapid.py`); closing the gap needs a Vietnamese recognizer over RapidOCR's detection boxes (not evaluated) |
+| 19 | AI defaults | - | OCR pipeline `rapidocr+easyocr` (phase 3.1b, ORCHESTRATOR decision): RapidOCR 3.10 (PP-OCRv6 small det + rec, CPU onnxruntime) reads every line, and EasyOCR 1.7.2 `latin_g2` (vi + en, torch on the `initialize` device) re-reads the same boxes. Only the differing segments that carry a letter RapidOCR cannot emit are taken from EasyOCR; a line whose two readings disagree wholesale (difflib ratio < 0.6) is taken from EasyOCR if it has such a letter. Data: `SS_SIDECAR_OCR_PIPELINE=rapidocr` restores RapidOCR alone. Embeddings `ViT-B-16-SigLIP-i18n-256` on `device: auto` | Phase 3.1 kept RapidOCR alone (87.4% >= the 85% kill line), but its PP-OCRv6 dictionary has none of the 44 tone-marked Vietnamese letters (x2 cases: `ế ậ ờ ữ ỵ`...), so `điều` read `điu` and FTS missed those words. 3.1b measured: no RapidOCR/PaddleOCR rec dictionary covers Vietnamese (best: PP-OCRv6, 46/134 letters; `latin_PP-OCRv5` 35/134; PaddleOCR's HF models are the same families). EasyOCR `latin_g2` has 134/134, but read alone it drops dots and slashes (34/48 exact on URL/email/file-name lines vs 48/48), hence the merge. Numbers: Re-score (phase 3.1b) | `SS_SIDECAR_OCR_PIPELINE` (`ss_sidecar/config.py`); drop `easyocr` from `sidecar/pyproject.toml` with it |
 | 20 | Package manager | npm / bun | npm for installs and `npx vitest` (invoked by `lane-tests.mjs`, D11) | npm is the installed baseline | - |
 | 21 | Editor rendering | canvas library / Canvas 2D | plain Canvas 2D in the UI, final PNG bytes sent to Rust as a raw IPC body | no extra dependency | add Konva if annotations get complex |
 | 22 | i18n | i18next / typed dictionary | typed dictionaries `src/i18n/vi.ts`, `en.ts` | two languages, no plural complexity | - |

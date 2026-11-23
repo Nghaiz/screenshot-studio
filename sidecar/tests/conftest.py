@@ -47,6 +47,7 @@ class Sidecar:
         full_env = os.environ.copy()
         full_env.update(PYTHONUTF8="1", PYTHONUNBUFFERED="1")
         full_env.pop("SS_SIDECAR_FAKE_ENGINES", None)
+        full_env.pop("SS_SIDECAR_OCR_PIPELINE", None)  # tests run the default OCR unless they pass `env`
         if fake:
             full_env["SS_SIDECAR_FAKE_ENGINES"] = "1"
         full_env.update(env or {})

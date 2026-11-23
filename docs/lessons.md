@@ -21,8 +21,29 @@ to a kit. Newest first. One entry: what happened, why, what to do.
   metadata `character`, 18,708 entries) lacks 44 precomposed letters (`ả ạ ằ ẳ ẵ ắ ặ ầ ẩ ẫ ấ ậ ẻ ẽ ẹ ề ể ễ ế ệ ỉ ị ỏ ọ ổ ỗ ố ộ
   ờ ở ỡ ớ ợ ủ ụ ừ ử ữ ứ ự ỳ ỷ ỹ ỵ`); `ă â đ ê ô ơ ư` and the Latin-1 accents are there. The decoder drops what it
   cannot name, so the error is silent.
-- **Do:** pick test text from letters the model has (`test_ocr.py`), and keep `test_vietnamese_tone_letters_known_gap`
-  until a model that has them is wired in (then invert it). `latin_PP-OCRv5` is worse (no `đ ư ơ`).
+- **Do:** check a recognizer's dictionary before trusting a "supports vi" claim (`rapidocr` 3.10 lists `vi` for
+  PP-OCRv6). Fixed in phase 3.1b, see below.
+
+## 2026-11-24 — phase 3.1b
+
+### No RapidOCR or PaddleOCR recognizer covers Vietnamese; EasyOCR does, but loses punctuation
+- **Seen:** every rec dictionary RapidOCR 3.10 can download (all `dict_url`s in `default_models.yaml`) covers at most
+  46 of the 134 non-ASCII Vietnamese letters (PP-OCRv6); PaddleOCR's HF models are the same families. EasyOCR's
+  `latin_g2` has all 134 and read the tone letters (96.0% vs 87.4%), but alone it dropped dots and slashes:
+  `someone@examplecom`, `https:/ /www example.com`, `reportpdf` (34/48 exact technical lines vs RapidOCR's 48/48).
+- **Do:** read each line with both and merge (`engines/ocr_easy.py` `merge_recovered`): RapidOCR's text is the base,
+  EasyOCR supplies only the differing segments that contain a letter missing from RapidOCR's dictionary (read at
+  load from `text_rec.postprocess_op.character`, not hard-coded). 96.8%, 48/48, English unchanged.
+- **A line dense in missing letters can derail RapidOCR entirely** (`Mật khẩu người dùng đã được cập nhật` read as
+  ` d      h`), and a segment merge then keeps the garbage. Below a difflib ratio of 0.6 the readings are not the
+  same text: take EasyOCR's line when it has a missing letter.
+- EasyOCR's `Reader(detector=False)` never downloads CRAFT (83 MB), and its `recognize()` returns results sorted by
+  y with the clipped box it was given: map results back by box, not by position.
+
+### RapidOCR's per-call flags are sticky
+- **Seen:** after `engine(img, use_rec=False)`, a later plain `engine(img)` returned a `TextDetOutput` (no `txts`):
+  `RapidOCR.__call__` stores `use_rec`/`use_cls` in the instance (`update_params`).
+- **Do:** one RapidOCR instance per calling pattern, or pass every flag explicitly on every call.
 
 ### open_clip's SigLIP i18n tokenizer needs `transformers`
 - `ViT-B-16-SigLIP-i18n-256` sets `hf_tokenizer_name`, so `open_clip.get_tokenizer` calls

@@ -10,6 +10,9 @@ description = "Screenshot Studio AI sidecar: OCR, SigLIP embeddings, zero-shot, 
 requires-python = ">=3.13,<3.14"
 dependencies = [
   "rapidocr>=3.10.0",
+  # Line recognizer over RapidOCR's detection boxes: its latin_g2 model has all 134 Vietnamese letters, which the
+  # PP-OCRv6 dictionary lacks (phase 3.1b, Deferred decision #19).
+  "easyocr>=1.7.2",
   "onnxruntime",
   "open_clip_torch>=4.2.2",
   "torch>=2.15.0",
