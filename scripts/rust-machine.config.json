@@ -1,0 +1,41 @@
+{
+  "paths": {
+    "RUSTUP_HOME": "D:\\DevCache\\tools\\rust\\rustup",
+    "CARGO_HOME": "D:\\DevCache\\tools\\rust\\cargo",
+    "SCCACHE_DIR": "D:\\DevCache\\cache\\sccache",
+    "HF_HOME": "D:\\DevCache\\huggingface",
+    "vsBuildToolsInstall": "D:\\IOT_Tools\\apps\\VSBuildTools",
+    "vsPackageCache": "D:\\DevCache\\cache\\vs-packages",
+    "downloads": "D:\\DevCache\\cache\\downloads"
+  },
+  "extraDirs": ["D:\\IOT_Tools\\apps", "D:\\IOT_Tools\\data"],
+  "userEnv": ["RUSTUP_HOME", "CARGO_HOME", "SCCACHE_DIR", "HF_HOME"],
+  "vsPolicyKey": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\VisualStudio\\Setup",
+  "rustupInitUrl": "https://win.rustup.rs/x86_64",
+  "toolchain": "stable",
+  "profile": "minimal",
+  "hostTuple": "x86_64-pc-windows-msvc",
+  "components": ["clippy", "rustfmt", "rust-src"],
+  "cargoTools": [
+    { "crate": "sccache", "bin": "sccache.exe" },
+    { "crate": "tauri-cli", "bin": "cargo-tauri.exe" }
+  ],
+  "vsBuildTools": {
+    "wingetId": "Microsoft.VisualStudio.BuildTools",
+    "workloads": ["Microsoft.VisualStudio.Workload.VCTools"],
+    "includeRecommended": true,
+    "requiresComponent": "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+  },
+  "vswhere": "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe",
+  "vsCodeExtensions": [
+    "rust-lang.rust-analyzer",
+    "tauri-apps.tauri-vscode",
+    "ms-vscode.cpptools",
+    "tamasfe.even-better-toml",
+    "ms-python.python",
+    "charliermarsh.ruff",
+    "dbaeumer.vscode-eslint",
+    "bradlc.vscode-tailwindcss"
+  ],
+  "minFreeGbC": 10
+}
