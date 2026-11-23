@@ -1,8 +1,10 @@
-//! Screenshot Studio Tauri shell: plugins, the `ss-core` app state, the async `ssimg` scheme (served
-//! off the main thread) and every contract command (contract_test.rs (e) checks this handler list).
+//! Screenshot Studio Tauri shell: plugins, the `ss-core` app state, the main window (WebView2 profile in the
+//! data dir), the async `ssimg` scheme (served off the main thread) and every contract command
+//! (contract_test.rs (e) checks this handler list).
 
 mod commands;
 mod state;
+mod window;
 
 use commands::{ai, edit, fileops, library, organize, query};
 use ss_core::AppCore;
@@ -14,8 +16,9 @@ use state::{AppState, http_response};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        // single-instance MUST be the first plugin (plugin docs). Second-launch focus + `open-image` land in 4.1.
-        .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
+        // single-instance MUST be the first plugin (plugin docs). A second launch exits and focuses this
+        // instance's window; forwarding a file argument as `open-image` lands in 4.1.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| window::focus_main(app)))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -26,7 +29,10 @@ pub fn run() {
         .plugin(tauri_plugin_drag::init())
         .setup(|app| {
             let core = AppCore::open_default()?;
+            let data_dir = core.data_dir().to_path_buf();
             app.manage(AppState { core });
+            // After `manage`: the page's first command or `ssimg` request must find the state.
+            window::create_main(app, &data_dir)?;
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol(ssimg::SCHEME, |ctx, request, responder| {

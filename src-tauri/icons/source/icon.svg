@@ -1,0 +1,196 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Screenshot Studio app icon, hand-authored source (phase 2.3). Rendered to icon-1024.png by
+    render.mjs (next to this file), then `cargo tauri icon` writes every size in src-tauri/icons/.
+    Motif: a luminous glass photo frame holding an aurora night sky over mountains and a still lake, a second
+    glass card behind it (the library), viewfinder corner marks (capture) and one glint.
+    Palette = the default `aurora-glass` theme (#0b1020 night, sky #38bdf8, violet #a855f7, emerald #10b981).
+  -->
+  <defs>
+    <!-- tile -->
+    <linearGradient id="tileBase" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#18205a"/>
+      <stop offset="0.5" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#04060d"/>
+    </linearGradient>
+    <radialGradient id="glowCyan" cx="0.16" cy="0.06" r="0.55">
+      <stop offset="0" stop-color="#38bdf8" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowViolet" cx="0.98" cy="0.1" r="0.55">
+      <stop offset="0" stop-color="#a855f7" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#a855f7" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowEmerald" cx="0.5" cy="1.1" r="0.6">
+      <stop offset="0" stop-color="#10b981" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#10b981" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="tileRim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.36"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.14"/>
+    </linearGradient>
+    <radialGradient id="tileGloss" cx="0.5" cy="0" r="0.8">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="tileClip">
+      <rect x="48" y="48" width="928" height="928" rx="212"/>
+    </clipPath>
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.06 0"/>
+    </filter>
+
+    <!-- back glass card -->
+    <linearGradient id="glassFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e0f2fe" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#c4b5fd" stop-opacity="0.04"/>
+    </linearGradient>
+    <linearGradient id="glassEdge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.7"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.1"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.3"/>
+    </linearGradient>
+
+    <!-- photo card -->
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#060a2c"/>
+      <stop offset="0.4" stop-color="#121c5c"/>
+      <stop offset="0.7" stop-color="#123f6e"/>
+      <stop offset="1" stop-color="#0c3340"/>
+    </linearGradient>
+    <filter id="streaks" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.038 0.0016" numOctaves="3" seed="11" result="t"/>
+      <feColorMatrix in="t" type="matrix" values="1.9 0 0 0 -0.22  1.9 0 0 0 -0.22  1.9 0 0 0 -0.22  0 0 0 0 1"/>
+    </filter>
+    <mask id="rays" maskUnits="userSpaceOnUse" x="150" y="200" width="760" height="620">
+      <rect x="150" y="200" width="760" height="620" filter="url(#streaks)"/>
+    </mask>
+    <linearGradient id="lake" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0d3a4a"/>
+      <stop offset="1" stop-color="#050b1c"/>
+    </linearGradient>
+    <linearGradient id="ridgeBack" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a4c8c"/>
+      <stop offset="1" stop-color="#132a57"/>
+    </linearGradient>
+    <linearGradient id="ridgeFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1434"/>
+      <stop offset="1" stop-color="#050816"/>
+    </linearGradient>
+    <linearGradient id="cardEdge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="0.45" stop-color="#bae6fd" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#e9d5ff" stop-opacity="0.7"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.3"/>
+      <stop offset="0.36" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="0.37" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="cardClip">
+      <rect x="196" y="318" width="612" height="452" rx="54"/>
+    </clipPath>
+    <filter id="blurXL" filterUnits="userSpaceOnUse" x="-100" y="-100" width="1224" height="1224"><feGaussianBlur stdDeviation="40"/></filter>
+    <filter id="blurL" filterUnits="userSpaceOnUse" x="-100" y="-100" width="1224" height="1224"><feGaussianBlur stdDeviation="26"/></filter>
+    <filter id="blurM" filterUnits="userSpaceOnUse" x="-100" y="-100" width="1224" height="1224"><feGaussianBlur stdDeviation="12"/></filter>
+    <filter id="blurS" filterUnits="userSpaceOnUse" x="-100" y="-100" width="1224" height="1224"><feGaussianBlur stdDeviation="5"/></filter>
+    <filter id="blurXS" filterUnits="userSpaceOnUse" x="-100" y="-100" width="1224" height="1224"><feGaussianBlur stdDeviation="2"/></filter>
+    <filter id="cardShadow" x="-25%" y="-25%" width="150%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="26"/>
+      <feOffset dy="26" result="s"/>
+      <feFlood flood-color="#020413" flood-opacity="0.8"/>
+      <feComposite in2="s" operator="in"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="markGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="g"/>
+      <feColorMatrix in="g" type="matrix" values="0 0 0 0 0.49  0 0 0 0 0.83  0 0 0 0 0.99  0 0 0 0.95 0" result="c"/>
+      <feMerge><feMergeNode in="c"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <linearGradient id="markFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e0f2fe"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 1. tile: night glass with the theme's three aurora glows -->
+  <g clip-path="url(#tileClip)">
+    <rect x="48" y="48" width="928" height="928" fill="url(#tileBase)"/>
+    <rect x="48" y="48" width="928" height="928" fill="url(#glowCyan)"/>
+    <rect x="48" y="48" width="928" height="928" fill="url(#glowViolet)"/>
+    <rect x="48" y="48" width="928" height="928" fill="url(#glowEmerald)"/>
+    <rect x="48" y="48" width="928" height="928" filter="url(#grain)"/>
+    <ellipse cx="512" cy="48" rx="520" ry="300" fill="url(#tileGloss)"/>
+  </g>
+  <rect x="50" y="50" width="924" height="924" rx="210" fill="none" stroke="url(#tileRim)" stroke-width="4"/>
+
+  <!-- 2. back glass card (the library behind the shot) -->
+  <g transform="rotate(8 560 470)">
+    <rect x="262" y="240" width="596" height="436" rx="54" fill="url(#glassFill)" stroke="url(#glassEdge)" stroke-width="5"/>
+  </g>
+
+  <!-- 3. photo card: aurora night sky over mountains and a still lake, behind glass -->
+  <g transform="rotate(-5 502 544)">
+    <g filter="url(#cardShadow)">
+      <rect x="196" y="318" width="612" height="452" rx="54" fill="url(#sky)"/>
+    </g>
+    <g clip-path="url(#cardClip)">
+      <!-- stars -->
+      <g fill="#ffffff">
+        <circle cx="258" cy="366" r="3.2" opacity="0.9"/>
+        <circle cx="316" cy="414" r="2" opacity="0.55"/>
+        <circle cx="380" cy="350" r="2.6" opacity="0.8"/>
+        <circle cx="448" cy="392" r="1.8" opacity="0.5"/>
+        <circle cx="520" cy="346" r="2.3" opacity="0.75"/>
+        <circle cx="600" cy="372" r="1.6" opacity="0.45"/>
+        <circle cx="240" cy="452" r="1.8" opacity="0.45"/>
+        <circle cx="664" cy="344" r="2" opacity="0.6"/>
+        <circle cx="742" cy="400" r="2.6" opacity="0.7"/>
+        <circle cx="776" cy="350" r="1.7" opacity="0.5"/>
+        <circle cx="300" cy="500" r="1.4" opacity="0.4"/>
+      </g>
+      <!-- horizon glow -->
+      <ellipse cx="500" cy="610" rx="330" ry="90" fill="#2dd4bf" opacity="0.4" filter="url(#blurL)"/>
+      <!-- aurora curtain: lower edge C0 = M150 540 C 250 486, 330 576, 440 552 S 610 420, 700 436 S 830 526, 890 500;
+           layers rise and cool from emerald to violet to rose, all broken into rays by the streak mask -->
+      <g mask="url(#rays)">
+        <path transform="translate(-24 -214)" d="M150 540 C 250 486, 330 576, 440 552 S 610 420, 700 436 S 830 526, 890 500" fill="none" stroke="#f472b6" stroke-width="150" opacity="0.32" filter="url(#blurXL)"/>
+        <path transform="translate(-14 -140)" d="M150 540 C 250 486, 330 576, 440 552 S 610 420, 700 436 S 830 526, 890 500" fill="none" stroke="#a855f7" stroke-width="190" opacity="0.62" filter="url(#blurXL)"/>
+        <path transform="translate(-6 -64)" d="M150 540 C 250 486, 330 576, 440 552 S 610 420, 700 436 S 830 526, 890 500" fill="none" stroke="#38bdf8" stroke-width="150" opacity="0.62" filter="url(#blurL)"/>
+        <path d="M150 540 C 250 486, 330 576, 440 552 S 610 420, 700 436 S 830 526, 890 500" fill="none" stroke="#34d399" stroke-width="104" opacity="0.95" filter="url(#blurM)"/>
+      </g>
+      <path d="M150 540 C 250 486, 330 576, 440 552 S 610 420, 700 436 S 830 526, 890 500" fill="none" transform="translate(0 30)" stroke="#d1fae5" stroke-width="10" opacity="0.38" filter="url(#blurS)"/>
+      <!-- mountains -->
+      <path d="M196 646 Q 250 610, 300 572 Q 330 598, 362 614 Q 432 562, 488 526 Q 538 572, 586 604 Q 640 568, 690 546 Q 726 578, 760 596 Q 786 586, 808 578 V 730 H 196 Z" fill="url(#ridgeBack)"/>
+      <path d="M196 646 Q 250 610, 300 572 Q 330 598, 362 614 Q 432 562, 488 526 Q 538 572, 586 604 Q 640 568, 690 546 Q 726 578, 760 596 Q 786 586, 808 578" fill="none" stroke="#a5f3fc" stroke-width="3" opacity="0.45" filter="url(#blurXS)"/>
+      <path d="M196 694 Q 250 666, 300 652 Q 340 672, 380 682 Q 430 644, 470 634 Q 520 668, 570 686 Q 630 652, 680 642 Q 740 672, 808 668 V 720 H 196 Z" fill="url(#ridgeFront)"/>
+      <!-- lake with the aurora's reflection -->
+      <rect x="196" y="714" width="612" height="60" fill="url(#lake)"/>
+      <ellipse cx="560" cy="728" rx="230" ry="14" fill="#5eead4" opacity="0.45" filter="url(#blurM)"/>
+      <g stroke="#a7f3d0" stroke-linecap="round" opacity="0.32" filter="url(#blurXS)">
+        <path d="M420 726 H 560" stroke-width="3"/>
+        <path d="M590 734 H 700" stroke-width="2.5"/>
+        <path d="M470 744 H 540" stroke-width="2"/>
+      </g>
+      <!-- glass sheen -->
+      <rect x="196" y="318" width="612" height="452" fill="url(#sheen)"/>
+    </g>
+    <rect x="196" y="318" width="612" height="452" rx="54" fill="none" stroke="url(#cardEdge)" stroke-width="7"/>
+
+    <!-- 4. viewfinder corner marks (capture) -->
+    <g filter="url(#markGlow)" fill="none" stroke="url(#markFill)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M150 412 V 330 A 58 58 0 0 1 208 272 H 290"/>
+      <path d="M714 272 H 796 A 58 58 0 0 1 854 330 V 412"/>
+      <path d="M854 676 V 758 A 58 58 0 0 1 796 816 H 714"/>
+      <path d="M290 816 H 208 A 58 58 0 0 1 150 758 V 676"/>
+    </g>
+  </g>
+
+  <!-- 5. glint -->
+  <g transform="translate(872 168)" filter="url(#markGlow)">
+    <path d="M0 -50 C 5 -15, 15 -5, 50 0 C 15 5, 5 15, 0 50 C -5 15, -15 5, -50 0 C -15 -5, -5 -15, 0 -50 Z" fill="#ffffff"/>
+  </g>
+</svg>
