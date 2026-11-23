@@ -54,6 +54,25 @@ Re-score (phase 2.3, 2026-11-24, `node scripts/accept/p2.mjs` 11/11 PASS in 2 ru
   single instance, WebView2 profile under the data dir.
 - New risk: the real 320 px thumbnails average 33.6 KB, 4.6x #29's 7.3 KB estimate, and that size is what the
   renderer keeps. P2 confidence: done (Accept green); P3 confidence unchanged at 45%.
+Re-score (phase 3.1, 2026-11-24, `node scripts/accept/lane-tests.mjs sidecar/tests/test_contract.py sidecar/tests/test_ocr.py sidecar/tests/test_embed.py` 3/3 PASS, 32 + 5 + 5 tests):
+- Vietnamese OCR (uncertainty 1): MEASURED. RapidOCR 3.10.0 defaults (PP-OCRv6 small, onnxruntime CPU) on 20 LOCAL owner
+  screenshots with Vietnamese text (60 sampled at random from 5,587 local files, copied read-only to %TEMP%, deleted
+  after): **87.4% character accuracy** (272 edits / 2,156 chars; per image 84.7-91.7%) on 5 hand-transcribed ones,
+  line-matched Levenshtein after NFC; 89.3% with diacritics stripped. Above 85%: RapidOCR stays (Deferred decision
+  #19). Most errors are the 44 tone-marked letters the model cannot emit (#19 known gap).
+- OCR time per image on CPU (Ryzen 9 7945HX, after warm-up): the 20 Vietnamese screenshots mean 1.03 s, median 0.98 s,
+  max 2.06 s (30 lines on average); all 60 sampled: mean 0.92 s. About 1.6 h of CPU for 6,260 images. GPU OCR not
+  measured (CPU onnxruntime per #19).
+- CUDA (uncertainty 3): MEASURED PASS. torch 2.15.0+cu132 sees the RTX 4060 Laptop GPU (CUDA 13.2, driver 610.88);
+  `python -m ss_sidecar --selftest` -> `{"capabilities":["ocr","embed","classify","color","pii"],"device":"cuda","ok":true,"errors":[]}`
+  (13.8 s); protocol `initialize` answers in ~11 s (budget 120 s). SigLIP runs under fp16 autocast on CUDA.
+- Semantic sanity (generated images): text "cat" vs a drawn cat 0.102, vs a text screenshot -0.015; Vietnamese
+  "con mèo" 0.083 vs 0.016; zero-shot cat/document both right (>= 0.997).
+- New risks: (1) the OCR gap above; (2) a library DLL load (numpy/OpenBLAS) stalled while the main thread blocked
+  reading the stdin pipe, fixed by giving libraries NUL as stdin (docs/lessons.md); (3) the sidecar validates params
+  against `contracts/sidecar-jsonrpc.schema.json` at run time, so the bundled app (3.4/4.3) must ship that file or set
+  `SS_CONTRACT_SCHEMA`. OCR forecast row: English and Vietnamese without tone-marked letters PASS (`test_ocr.py`);
+  words with them cannot be found. P3 confidence unchanged at 45%.
 Not checked: ts-rs 12 `#[ts(type)]` behaviour on Option/Vec fields (from library knowledge; contract_test bans `bigint` to catch it); Tauri raw-body IPC + headers API; `tauri-plugin-drag` version; Rust/Tauri build on this machine (Rust not installed yet); WebView2 CDP attach in a dev build; RapidOCR Vietnamese; OneDrive Files On-Demand state of the 5,604 files (how many are cloud-only); SigLIP i18n quality on Vietnamese queries; NSIS `/D=` with currentUser mode on D:.
 
 ## Finish ETA
@@ -263,7 +282,7 @@ Ordered irreversible / costliest first.
 | 16 | Text search | LIKE / FTS5 | FTS5 `unicode61 remove_diacritics 2` over file name + OCR + note | diacritic-insensitive is in the design | - |
 | 17 | Vector storage | vector DB / SQLite BLOB + brute force | float32 BLOB in SQLite, cosine in Rust | 5,604 x 768 floats is ~17 MB, brute force is ms | add an index later if > 100k |
 | 18 | Duplicate detection location | Python / Rust | Rust (`blake3` exact + `image_hasher` dHash, Hamming <= 6 default) | works without the sidecar | constant `DUP_HAMMING_DEFAULT` |
-| 19 | AI defaults | - | OCR RapidOCR on CPU onnxruntime (GPU opt-in); embeddings `ViT-B-16-SigLIP-i18n-256` on `device: auto` | multilingual (vi) + fits 8 GB VRAM; CPU OCR avoids a cuDNN install | sidecar config |
+| 19 | AI defaults | - | OCR RapidOCR on CPU onnxruntime (GPU opt-in); embeddings `ViT-B-16-SigLIP-i18n-256` on `device: auto`. **Phase 3.1 spike (2026-11-24):** RapidOCR 3.10.0 defaults (PP-OCRv6 small det + rec, multilingual) kept: 87.4% character accuracy >= the 85% kill line, so PaddleOCR was not installed. Known gap, owner's call: the PP-OCRv6 dictionary has no tone-marked Vietnamese letters (44, e.g. `ế ậ ờ ữ ỵ`), so they vanish from OCR text (`điều kiện` -> `điu kin`) and FTS cannot find those words; pinned by `test_vietnamese_tone_letters_known_gap` | multilingual (vi) + fits 8 GB VRAM; CPU OCR avoids a cuDNN install. Spike numbers: Re-score (phase 3.1). `latin_PP-OCRv5` rec was tried and is worse (no `đ ư ơ`); PaddleOCR ships the same model families, so the design's fallback does not close the gap | sidecar config (`ss_sidecar/config.py`, `engines/ocr_rapid.py`); closing the gap needs a Vietnamese recognizer over RapidOCR's detection boxes (not evaluated) |
 | 20 | Package manager | npm / bun | npm for installs and `npx vitest` (invoked by `lane-tests.mjs`, D11) | npm is the installed baseline | - |
 | 21 | Editor rendering | canvas library / Canvas 2D | plain Canvas 2D in the UI, final PNG bytes sent to Rust as a raw IPC body | no extra dependency | add Konva if annotations get complex |
 | 22 | i18n | i18next / typed dictionary | typed dictionaries `src/i18n/vi.ts`, `en.ts` | two languages, no plural complexity | - |

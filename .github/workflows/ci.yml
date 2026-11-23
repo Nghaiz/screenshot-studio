@@ -30,6 +30,29 @@ jobs:
       - name: Production build (tsc + vite)
         run: npm run build
 
+  sidecar:
+    name: Sidecar (JSON-RPC contract test, fake engines)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      # The real-model tests (test_ocr.py, test_embed.py) need multi-GB downloads and stay local (phase Accept).
+      # The contract test runs the real server with fake engines: stdlib + jsonschema + pytest only.
+      - name: Minimal venv (versions from sidecar/uv.lock)
+        run: |
+          python -m venv "${{ runner.temp }}\sidecar-venv"
+          & "${{ runner.temp }}\sidecar-venv\Scripts\python.exe" -m pip install --disable-pip-version-check pytest==9.2.0 jsonschema==4.26.0
+      - name: Sidecar contract test (lane runner)
+        env:
+          SS_SIDECAR_VENV: ${{ runner.temp }}\sidecar-venv
+        run: node scripts/accept/lane-tests.mjs sidecar/tests/test_contract.py
+
   rust:
     name: Rust (contract test, app build)
     runs-on: windows-latest

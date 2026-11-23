@@ -3,6 +3,35 @@
 Non-obvious gotchas found while building Screenshot Studio. Owner rule: lessons stay in this repo, nothing goes
 to a kit. Newest first. One entry: what happened, why, what to do.
 
+## 2026-11-24 — phase 3.1
+
+### A stdin pipe read blocks DLL loading in other threads (Windows)
+- **Seen:** the real sidecar answered `initialize` only after the NEXT line arrived on stdin. `faulthandler` showed the
+  worker thread stuck inside `import numpy` (`_multiarray_umath`, a native DLL load, reached from `import torch`) while
+  the main thread sat in `sys.stdin.buffer.readline()`. Fake engines never showed it; plain `os.fstat(0)`,
+  `isatty(0)` and a child process inheriting stdin did not stall in isolation.
+- **Why (likely):** Windows serializes synchronous I/O per file object, and something in that DLL's initialization
+  touches the standard input handle while the pending `ReadFile` holds it.
+- **Do:** a stdio server that loads native libraries in worker threads reads its protocol from a private duplicate of
+  fd 0 and gives everyone else NUL (`ss_sidecar/__main__.py` `claim_stdio`). The real-model tests catch a regression:
+  they hung (120 s timeout) before the fix.
+
+### RapidOCR's PP-OCRv6 model cannot output most Vietnamese tone letters
+- **Seen:** `điều kiện` read as `điu kin`; `Xin chào thế giới` as `Xin chào th gii`. The rec model's dictionary (onnx
+  metadata `character`, 18,708 entries) lacks 44 precomposed letters (`ả ạ ằ ẳ ẵ ắ ặ ầ ẩ ẫ ấ ậ ẻ ẽ ẹ ề ể ễ ế ệ ỉ ị ỏ ọ ổ ỗ ố ộ
+  ờ ở ỡ ớ ợ ủ ụ ừ ử ữ ứ ự ỳ ỷ ỹ ỵ`); `ă â đ ê ô ơ ư` and the Latin-1 accents are there. The decoder drops what it
+  cannot name, so the error is silent.
+- **Do:** pick test text from letters the model has (`test_ocr.py`), and keep `test_vietnamese_tone_letters_known_gap`
+  until a model that has them is wired in (then invert it). `latin_PP-OCRv5` is worse (no `đ ư ơ`).
+
+### open_clip's SigLIP i18n tokenizer needs `transformers`
+- `ViT-B-16-SigLIP-i18n-256` sets `hf_tokenizer_name`, so `open_clip.get_tokenizer` calls
+  `transformers.AutoTokenizer`; `open_clip_torch` does not depend on it. Added to `sidecar/pyproject.toml`.
+
+### The uv venv's `python.exe` is a launcher: one Python = two processes
+- `D:\...\sidecar-venv\Scripts\python.exe` starts the real interpreter as a child. Killing a hung sidecar or test run
+  means stopping both PIDs (`Get-CimInstance Win32_Process` shows the pair with the same command line).
+
 ## 2026-11-24 — phase 2.3
 
 ### Browsing the whole real library costs ~720 MB: Chromium keeps ~2,000 decoded thumbnails

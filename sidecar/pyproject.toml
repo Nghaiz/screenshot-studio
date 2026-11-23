@@ -16,6 +16,9 @@ dependencies = [
   # open_clip_torch depends on torchvision; it must come from the same CUDA index as torch,
   # or PyPI's CPU torchvision pins a CPU torch and the resolve conflicts.
   "torchvision",
+  # open_clip loads the ViT-B-16-SigLIP-i18n-256 tokenizer (`hf_tokenizer_name`, tokenizer.json) through
+  # transformers.AutoTokenizer; open_clip_torch does not depend on it. Added in phase 3.1.
+  "transformers",
   "pillow",
   "numpy",
   "jsonschema",
