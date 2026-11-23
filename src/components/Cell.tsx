@@ -1,11 +1,11 @@
 // One gallery item. Loaded items show the 320 px thumbnail; unloaded indices show a shimmer placeholder.
 //
-// Memory (Deferred decision #31, measured phase 2.2 in the release app on 6,300 fixture images): every
-// thumbnail the WebView decodes stays in Chromium's decoded-image cache (GPU process) until that cache is
-// full, whether or not its cell is still mounted. A cell therefore gets its <img> only after it has stayed
-// mounted THUMB_SETTLE_MS: rows that fly past in a fast scroll are never fetched or decoded
-// (813 -> 489 MB after a 20 s full scroll, frame time unchanged). A slow scroll still decodes every image
-// (819 MB); capping that cache is outside the UI (phase 2.3).
+// Memory (Deferred decision #31, measured phase 2.2 in the release app on 6,300 fixture images): a fast
+// scroll that starts a fetch and decode for every cell it passes pushes Chromium's decoded-image memory
+// (renderer + GPU process) to ~813 MB. A cell therefore gets its <img> only after it has stayed mounted
+// THUMB_SETTLE_MS, so rows that fly past are never fetched or decoded. With that, a fast 20 s full scroll
+// peaks at 476-521 MB, and paging through every screen (all 6,300 decoded) at 494-501 MB. The first
+// screen alone is ~420 MB of WebView2 cost; more headroom needs a Chromium-side cap (phase 2.3).
 import { memo, useEffect, useState, type CSSProperties, type DragEvent, type MouseEvent } from "react";
 import type { ImageSummary } from "@bindings/ImageSummary";
 import { useT } from "../i18n";
