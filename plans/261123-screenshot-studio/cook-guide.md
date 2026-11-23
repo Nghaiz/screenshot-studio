@@ -1,7 +1,8 @@
 # Cook guide — one new chat session per phase
 
 Run the phases **in order**, **one per new chat session**, from the project root `D:\Screenshot_Picture`.
-Each session: paste the command, let it finish, check that the Accept line printed PASS, then close the session.
+Each session: paste the command, let it finish, check that the Accept line printed PASS and the phase PR is
+merged with green CI on GitHub, then close the session.
 
 ## Before phase 1.1 (once)
 
@@ -23,7 +24,7 @@ So: **always paste the common context line** after the command. You do not need 
 ### Common context line (paste after every command)
 
 ```
-Context: read the plan README.md (Decision register, Contract, Deferred decisions, Human steps) and design-intent.md first; the contract*.md files are the source of truth — do not edit them unless this phase is 1.1 or an integration phase (1.4, 2.3, 3.4, 4.3). Stay inside this phase's Owns: globs. Work on branch phase-<id>, run the phase's Accept command and show its output, then merge --ff-only into main. After the merge, git push origin main (private GitHub repo) and check the CI run is green. Personal project: no Plane, no PR, no review agents.
+Context: read the plan README.md (Decision register, Contract, Deferred decisions, Human steps) and design-intent.md first; the contract*.md files are the source of truth — do not edit them unless this phase is 1.1 or an integration phase (1.4, 2.3, 3.4, 4.3). Stay inside this phase's Owns: globs. Start from an up-to-date main (git switch main && git pull --ff-only), then work on branch phase-<id>. Run the phase's Accept command and show its output. Then push the branch and open a PR into main on the PUBLIC repo Nghaiz/screenshot-studio (gh pr create --base main, title "phase <id>: <goal>"), wait for CI to go green (fix red checks on the same branch), squash-merge it (gh pr merge --squash --delete-branch), and finish with git switch main && git pull --ff-only. Public repo: never commit secrets, .env files, screenshots or anything from the OneDrive folder. Personal project: no Plane.
 ```
 
 ## Commands
@@ -32,7 +33,7 @@ Plan dir: `D:\Screenshot_Picture\plans\261123-screenshot-studio`
 
 | # | Command | Gate / note |
 |---|---|---|
-| 1 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-1.1-scaffold-contracts.md` | Runs `git init`; commits the plan too |
+| 1 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-1.1-scaffold-contracts.md` | DONE 2026-11-23 (`3466191`, `e818019`; CI green on `318d3e4`) |
 | 2 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-1.2-core-index.md` | Rust core lane |
 | 3 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-1.3-ui-browse.md` | UI lane, themes |
 | 4 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-1.4-p1-integration.md` | **Human:** approve first read-only index of the OneDrive folder; decide the "download cloud-only files" button |
