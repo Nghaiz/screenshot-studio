@@ -71,15 +71,15 @@ def selftest(device: str, embed_model: str) -> dict:
 
 
 def prefetch(embed_model: str) -> dict:
-    """Load every real model once so the weights land in HF_HOME (OCR models ship inside the rapidocr wheel)."""
+    """Load every real model once so the weights land in HF_HOME (RapidOCR's own models ship inside its wheel)."""
     if embed_model not in config.EMBED_MODELS:
         return {"ok": False, "models": [], "errors": [f"unsupported embedModel {embed_model!r}"]}
     models, errors = [], []
     try:
-        from .engines.ocr_rapid import RapidOcrEngine
+        from .engines import ocr_engine_class
 
-        RapidOcrEngine()
-        models.append("rapidocr:PP-OCRv6-small (bundled)")
+        engine = ocr_engine_class()("cpu", download=True)
+        models.append(f"ocr:{engine.name}")
     except Exception as e:  # noqa: BLE001
         log.exception("OCR prefetch failed")
         errors.append(f"ocr: {type(e).__name__}: {e}")

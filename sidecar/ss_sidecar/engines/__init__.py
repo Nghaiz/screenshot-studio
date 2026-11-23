@@ -59,6 +59,17 @@ def resolve_device(requested: str, fake: bool) -> str:
     return "cuda" if requested in ("auto", "cuda") and available else "cpu"
 
 
+def ocr_engine_class():
+    """The real OcrEngine class for `config.ocr_pipeline()` (data: SS_SIDECAR_OCR_PIPELINE)."""
+    if config.ocr_pipeline() == "rapidocr+easyocr":
+        from .ocr_easy import RapidOcrEasyToneEngine
+
+        return RapidOcrEasyToneEngine
+    from .ocr_rapid import RapidOcrEngine
+
+    return RapidOcrEngine
+
+
 def _attempt(name: str, errors: dict[str, str], factory: Callable[[], T]) -> T | None:
     try:
         return factory()
@@ -83,10 +94,9 @@ def load_engines(device: str, embed_model: str, fake: bool | None = None) -> Eng
         default_dim = config.FAKE_EMBED_DIM
     else:
         from .color import PillowColorExtractor
-        from .ocr_rapid import RapidOcrEngine
         from .siglip import SiglipEmbedder
 
-        ocr = _attempt("ocr", errors, RapidOcrEngine)
+        ocr = _attempt("ocr", errors, lambda: ocr_engine_class()(resolved))
         embedder = _attempt("embed", errors, lambda: SiglipEmbedder(embed_model, resolved))
         color = _attempt("color", errors, PillowColorExtractor)
         default_dim = config.EMBED_MODELS[embed_model]["dim"]

@@ -1,4 +1,5 @@
-"""REAL OCR (RapidOCR, PP-OCRv6 small, CPU) through the sidecar protocol, on generated images (D10: no owner files).
+"""REAL OCR (RapidOCR + EasyOCR latin_g2 for tone-marked letters) through the sidecar protocol, on generated images
+(D10: no owner files).
 
 Local-only (needs the sidecar venv); never skips (D11). Text is compared after NFC normalization.
 """
@@ -6,7 +7,7 @@ from __future__ import annotations
 
 import unicodedata
 
-from conftest import MESSAGE, assert_valid, text_image
+from conftest import INIT_PARAMS, MESSAGE, SIDECAR_INIT_TIMEOUT_S, assert_valid, text_image
 
 
 def nfc(s: str) -> str:
@@ -27,31 +28,47 @@ def test_initialize_reports_ocr(real_sidecar):
 
 def test_recognises_english_and_vietnamese(real_sidecar, tmp_path):
     sc, _ = real_sidecar
-    image = text_image(tmp_path / "mixed.png", ["Screenshot Studio invoice 2026", "Thông báo: đã lưu hóa đơn"])
+    image = text_image(tmp_path / "mixed.png", ["Screenshot Studio invoice 2026", "Thông báo: đã lưu hóa đơn",
+                                                         "Docs: https://www.example.com/v1.2 report.pdf"])
     (result,) = ocr(sc, [{"imageId": 1, "path": str(image)}])
     assert result["error"] is None
     text = nfc(result["text"])
-    for expected in ("Screenshot Studio", "invoice 2026", "Thông báo", "đã lưu", "hóa đơn"):
+    for expected in ("Screenshot Studio", "invoice 2026", "Thông báo", "đã lưu", "hóa đơn",
+                     "https://www.example.com/v1.2 report.pdf"):
         assert nfc(expected) in text, f"{expected!r} not in OCR text {text!r}"
-    width, height = 1280, 60 + 2 * int(44 * 1.8)
+    width, height = 1280, 60 + 3 * int(44 * 1.8)
     for line in result["lines"]:
         x1, y1, x2, y2 = line["box"]
         assert 0 <= x1 < x2 <= width and 0 <= y1 < y2 <= height, line
         assert 0 < line["score"] <= 1, line
 
 
-def test_vietnamese_tone_letters_known_gap(real_sidecar, tmp_path):
-    """Absence pin (KnownGap): the PP-OCRv6 dictionary has no `ế`, `ớ` (44 tone letters), so they are dropped.
+TONE_LINES = ["Xin chào thế giới", "Điều kiện cần và đủ", "Mật khẩu người dùng đã được cập nhật",
+              "Ảnh chụp màn hình lưu ở thư mục Tải xuống"]
 
-    If this goes RED the gap closed (a model with full Vietnamese coverage is in use): invert it into a positive
-    assertion that "Xin chào thế giới" is read verbatim and update Deferred decision #19. Never re-pin or delete it.
+
+def test_vietnamese_tone_letters_are_recognised(real_sidecar, tmp_path):
+    """Inverted from the phase 3.1 KnownGap pin: PP-OCRv6 alone dropped the 44 tone-marked letters (`ế ậ ờ`...).
+
+    The default pipeline (RapidOCR + EasyOCR latin_g2 restoring those letters, Deferred decision #19) reads them. A failure
+    here is a regression of Vietnamese OCR search: fix the pipeline, never re-pin the old gap.
     """
     sc, _ = real_sidecar
-    image = text_image(tmp_path / "vi.png", ["Xin chào thế giới"])
+    image = text_image(tmp_path / "vi.png", TONE_LINES)
     (result,) = ocr(sc, [{"imageId": 2, "path": str(image)}])
     text = nfc(result["text"])
-    assert "Xin chào" in text, text
-    assert "thế giới" not in text, "gap closed: see this test's docstring"
+    for line in TONE_LINES:
+        assert nfc(line) in text, f"{line!r} not read verbatim from {text!r}"
+
+
+def test_rapidocr_only_pipeline_stays_selectable(spawn, tmp_path):
+    """The OCR pipeline is data (SS_SIDECAR_OCR_PIPELINE): the RapidOCR-only pipeline must keep working."""
+    sc = spawn(fake=False, env={"SS_SIDECAR_OCR_PIPELINE": "rapidocr"})
+    init = sc.request("initialize", INIT_PARAMS, timeout=SIDECAR_INIT_TIMEOUT_S)
+    assert "ocr" in init["result"]["capabilities"], init
+    image = text_image(tmp_path / "en.png", ["Screenshot Studio invoice 2026"])
+    (result,) = ocr(sc, [{"imageId": 4, "path": str(image)}])
+    assert "Screenshot Studio invoice 2026" in nfc(result["text"])
 
 
 def test_bad_items_are_reported_in_band(real_sidecar, tmp_path):

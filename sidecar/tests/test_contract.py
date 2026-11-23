@@ -15,6 +15,7 @@ import pytest
 from conftest import FIXTURES, INIT_PARAMS, MESSAGE, SIDECAR_DIR, assert_valid, validator
 
 from ss_sidecar import config, pii
+from ss_sidecar.engines.ocr_easy import VIETNAMESE_LETTERS, merge_recovered
 from ss_sidecar.schema import def_name
 
 ITEM = {"imageId": 1, "path": "C:\\shots\\a.png"}
@@ -184,6 +185,37 @@ def test_selftest_prints_one_json_line_and_exit_code():
     assert {"capabilities", "device", "ok"} <= set(report) and report["ok"] is True
     bad = run_cli("--selftest", env={config.ENV_FAKE_DISABLE: "ocr"})
     assert bad.returncode == 1 and json.loads(bad.stdout)["ok"] is False
+
+
+def test_ocr_pipeline_is_validated_data(monkeypatch):
+    monkeypatch.delenv(config.ENV_OCR_PIPELINE, raising=False)
+    assert config.ocr_pipeline() == config.DEFAULT_OCR_PIPELINE == "rapidocr+easyocr"
+    monkeypatch.setenv(config.ENV_OCR_PIPELINE, "rapidocr")
+    assert config.ocr_pipeline() == "rapidocr"
+    monkeypatch.setenv(config.ENV_OCR_PIPELINE, "tesseract")
+    with pytest.raises(ValueError, match="tesseract"):
+        config.ocr_pipeline()
+
+
+MISSING = frozenset("ảạầậẩềệểếờủẢẠẦẬẨỀỆỂẾỜỦ")  # a sample of the letters RapidOCR cannot emit
+
+
+@pytest.mark.parametrize("base,other,merged", [
+    ("Điu kin cn và đ đ", "Điều kiện cần và đủ để", "Điều kiện cần và đủ để"),  # restored
+    ("Ành chp", "Ảnh chp", "Ảnh chp"),  # a wrong letter replaced by a missing one
+    (" d      h", "Mật khẩu đã cập nhật", "Mật khẩu đã cập nhật"),  # derailed base: whole line from `other`
+    ("Total due", "Tòtal dux", "Total due"),  # no missing letter in `other`'s differing segments: base kept
+    ("someone@example.com", "someone@examplecom", "someone@example.com"),  # EasyOCR's punctuation loss ignored
+    ("https://a.vn/x", "https:I/a vn/x", "https://a.vn/x"),
+    ("v1.2, đã lưu", "v1.2; đã lưu", "v1.2, đã lưu"),  # no missing letter in the diff: base kept
+    ("Hello", None, "Hello"),
+])
+def test_merge_takes_only_segments_with_missing_letters(base, other, merged):
+    assert merge_recovered(base, other, MISSING) == merged
+
+
+def test_vietnamese_letter_set_is_complete():
+    assert len(VIETNAMESE_LETTERS) == 134 and {"đ", "Đ", "ế", "Ỵ", "ơ", "Ư"} <= VIETNAMESE_LETTERS
 
 
 def test_sidecar_version_matches_pyproject():

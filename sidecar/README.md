@@ -27,13 +27,15 @@ and every library print goes to stderr.
 |---|---|
 | `HF_HOME` | model cache (`D:\DevCache\huggingface`) |
 | `SS_CONTRACT_SCHEMA` | schema path when the repo layout is not present (bundled app) |
+| `SS_SIDECAR_OCR_PIPELINE` | `rapidocr+easyocr` (default: RapidOCR + EasyOCR restoring Vietnamese tone letters) or `rapidocr` |
 | `SS_SIDECAR_FAKE_ENGINES=1` | deterministic stdlib-only fakes (contract test, CI) |
 | `SS_SIDECAR_FAKE_DELAY_MS`, `SS_SIDECAR_FAKE_DISABLE=ocr,embed,color` | fake-only: per-item delay, engines that fail to load |
 
 ## Layout
 
 `server.py` (reader, 2 workers, locked writer, `$/cancel`), `methods.py` (handlers + registry), `schema.py`,
-`pii.py` (regex + Luhn), `engines/` (`base.py` interfaces; `ocr_rapid.py`, `siglip.py`, `color.py` real; `fakes.py`).
+`pii.py` (regex + Luhn), `engines/` (`base.py` interfaces; `ocr_easy.py` (default OCR), `ocr_rapid.py`, `siglip.py`,
+`color.py` real; `fakes.py`).
 
 ## Tests
 
