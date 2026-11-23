@@ -1,8 +1,10 @@
-// Status bar: item count, selection, cloud-only count, and index progress from `job-progress` events.
+// Status bar: item count, selection, cloud-only count, job progress from `job-progress` events (index, AI, cloud
+// download, export), and the AI status pill (opens Settings > AI).
 import type { JobProgress } from "@bindings/JobProgress";
 import { useCounts } from "../data/library";
 import { useT } from "../i18n";
 import { useView } from "../state/view";
+import { AiStatusPill, taskName } from "./AiNotice";
 
 export function StatusBar({ total }: { total: number }) {
   const t = useT();
@@ -20,6 +22,7 @@ export function StatusBar({ total }: { total: number }) {
       {active.map((j) => (
         <JobLine key={j.jobId} job={j} />
       ))}
+      <AiStatusPill />
     </footer>
   );
 }
@@ -27,13 +30,20 @@ export function StatusBar({ total }: { total: number }) {
 function JobLine({ job }: { job: JobProgress }) {
   const t = useT();
   const pct = job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
-  const text = job.error
-    ? t("status.jobFailed", { message: job.error.message })
-    : job.finished
-      ? t("status.jobDone")
-      : t("status.indexing", { done: job.done, total: job.total });
+  const counts = { done: job.done, total: job.total };
+  const running =
+    job.kind === "ai"
+      ? job.total > 0
+        ? t("status.ai", { task: taskName(t, job.stage), ...counts })
+        : t("ai.queued")
+      : job.kind === "cloudDownload"
+        ? t("status.downloading", counts)
+        : job.kind === "export"
+          ? t("status.exporting", counts)
+          : t("status.indexing", counts);
+  const text = job.error ? t("status.jobFailed", { message: job.error.message }) : job.finished ? t("status.jobDone") : running;
   return (
-    <span className="flex items-center gap-2" title={job.currentPath ?? undefined}>
+    <span className="flex items-center gap-2" title={job.currentPath ?? undefined} data-job-kind={job.kind}>
       <span>{text}</span>
       <span className="h-1.5 w-28 overflow-hidden rounded" style={{ background: "var(--ss-border)" }}>
         <span className="block h-full" style={{ width: `${pct}%`, background: "var(--ss-accent)", transition: "width var(--ss-dur)" }} />

@@ -20,12 +20,19 @@ export function on<E extends EventName>(event: E, cb: (payload: EventMap[E]) => 
   return listen<EventMap[E]>(event, (e) => cb(e.payload));
 }
 
-/** For React effects: subscribes now, unsubscribes on cleanup even if `listen` resolves late. */
-export function subscribe<E extends EventName>(event: E, cb: (payload: EventMap[E]) => void): () => void {
+/**
+ * For React effects: subscribes now, unsubscribes on cleanup even if `listen` resolves late. `onLive` runs once
+ * the listener is registered: an event emitted before that is lost, so state read earlier is re-read there.
+ */
+export function subscribe<E extends EventName>(event: E, cb: (payload: EventMap[E]) => void, onLive?: () => void): () => void {
   let unlisten: UnlistenFn | null = null;
   let cancelled = false;
   on(event, cb).then(
-    (fn) => (cancelled ? fn() : (unlisten = fn)),
+    (fn) => {
+      if (cancelled) return fn();
+      unlisten = fn;
+      onLive?.();
+    },
     (e) => console.error(`events: cannot listen to ${event}`, e),
   );
   return () => {

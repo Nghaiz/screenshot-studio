@@ -2,7 +2,7 @@
 import { create } from "zustand";
 import type { JobProgress } from "@bindings/JobProgress";
 import type { MoveMode } from "@bindings/MoveMode";
-import { emptyFilter, type FilterSpec, type View } from "../lib/query";
+import { emptyFilter, isToolView, type FilterSpec, type View } from "../lib/query";
 
 export type Lightbox =
   | { mode: "closed" }
@@ -37,6 +37,12 @@ export type Dialog =
   | { kind: "purge"; ids: number[] };
 
 export type SidePanel = "none" | "details" | "history";
+export type SettingsTab = "appearance" | "ai";
+/**
+ * The degraded-mode banner, at most once per app session: `pending` until the sidecar has settled in a notice state,
+ * `shown` while it is up, `done` once dismissed or once the sidecar recovered. Never `shown` again after `done`.
+ */
+export type AiNotice = "pending" | "shown" | "done";
 
 export interface ViewState {
   view: View;
@@ -48,6 +54,8 @@ export interface ViewState {
   lightbox: Lightbox;
   paletteOpen: boolean;
   settingsOpen: boolean;
+  settingsTab: SettingsTab;
+  aiNotice: AiNotice;
   sidePanel: SidePanel;
   dialog: Dialog | null;
   confirmRecycle: number[] | null;
@@ -69,7 +77,11 @@ export interface ViewState {
   openLightbox: (lb: Lightbox) => void;
   closeLightbox: () => void;
   setPalette: (open: boolean) => void;
-  setSettings: (open: boolean) => void;
+  /** Opens on `tab` when given, else on the tab used last. */
+  setSettings: (open: boolean, tab?: SettingsTab) => void;
+  setAiNotice: (notice: AiNotice) => void;
+  /** A semantic search whose sidecar went away: back to `any` (the backend refuses `semantic` unless ready). */
+  dropSemantic: () => void;
   setSidePanel: (panel: SidePanel) => void;
   openDialog: (dialog: Dialog) => void;
   closeDialog: () => void;
@@ -84,6 +96,8 @@ let toastSeq = 0;
 
 /** A new result set: focus the first item, drop the selection. */
 const fresh = { focusIndex: 0, anchorIndex: null };
+/** Changing the filter (sidebar folder, tag, album, smart filter) from a smart tool shows the library it describes. */
+const browse = (s: ViewState): Partial<ViewState> => (isToolView(s.view) ? { view: "library", lightbox: { mode: "closed" } } : {});
 
 export const useView = create<ViewState>((set) => ({
   view: "library",
@@ -95,6 +109,8 @@ export const useView = create<ViewState>((set) => ({
   lightbox: { mode: "closed" },
   paletteOpen: false,
   settingsOpen: false,
+  settingsTab: "appearance",
+  aiNotice: "pending",
   sidePanel: "none",
   dialog: null,
   confirmRecycle: null,
@@ -103,10 +119,12 @@ export const useView = create<ViewState>((set) => ({
   scrollRequest: 0,
 
   setView: (view) => set({ view, ...fresh, selection: new Set(), lightbox: { mode: "closed" } }),
-  setFolder: (folder) => set((s) => ({ filter: { ...s.filter, folders: folder === null ? [] : [folder] }, ...fresh, selection: new Set() })),
-  setFilter: (patch) => set((s) => ({ filter: { ...s.filter, ...patch }, ...fresh, selection: new Set() })),
-  replaceFilter: (filter) => set({ filter, ...fresh, selection: new Set() }),
-  resetFilter: () => set({ filter: emptyFilter(), ...fresh, selection: new Set() }),
+  setFolder: (folder) =>
+    set((s) => ({ ...browse(s), filter: { ...s.filter, folders: folder === null ? [] : [folder] }, ...fresh, selection: new Set() })),
+  setFilter: (patch) => set((s) => ({ ...browse(s), filter: { ...s.filter, ...patch }, ...fresh, selection: new Set() })),
+  replaceFilter: (filter) => set((s) => ({ ...browse(s), filter, ...fresh, selection: new Set() })),
+  resetFilter: () => set((s) => ({ ...browse(s), filter: emptyFilter(), ...fresh, selection: new Set() })),
+  dropSemantic: () => set((s) => ({ filter: { ...s.filter, textMode: "any" }, ...fresh, selection: new Set() })),
   setFiltersOpen: (filtersOpen) => set({ filtersOpen }),
   focus: (index, scroll = true) =>
     set((s) => ({ focusIndex: Math.max(0, index), scrollRequest: scroll ? s.scrollRequest + 1 : s.scrollRequest })),
@@ -122,7 +140,8 @@ export const useView = create<ViewState>((set) => ({
   openLightbox: (lightbox) => set({ lightbox, paletteOpen: false }),
   closeLightbox: () => set({ lightbox: { mode: "closed" } }),
   setPalette: (paletteOpen) => set({ paletteOpen }),
-  setSettings: (settingsOpen) => set({ settingsOpen }),
+  setSettings: (settingsOpen, tab) => set(tab ? { settingsOpen, settingsTab: tab, paletteOpen: false } : { settingsOpen }),
+  setAiNotice: (aiNotice) => set({ aiNotice }),
   setSidePanel: (sidePanel) => set({ sidePanel }),
   openDialog: (dialog) => set({ dialog, paletteOpen: false }),
   closeDialog: () => set({ dialog: null }),

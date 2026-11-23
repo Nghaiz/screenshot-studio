@@ -2,13 +2,18 @@
 // the in-app trash and the Recycle Bin confirm dialog, NEVER `request_permanent_delete` / `delete_permanently`
 // nor the permanent delete dialog. browse.test.tsx and delete-dialogs.test.tsx run every command below
 // against the mock and assert that.
+import type { SidecarStatus } from "@bindings/SidecarStatus";
 import { askRecycle, notify, pickAndAddFolder, reindex, restoreImages, trashImages, undo } from "../actions/images";
+import { runAiOnLibrary } from "../actions/smart";
+import { cached } from "../data/organize";
 import type { ImageList } from "../data/images";
 import type { MessageKey, Translate } from "../i18n";
 import { LANGUAGES } from "../i18n/languages";
 import { clampThumb, LAYOUTS, usePrefs } from "../state/prefs";
 import { useView } from "../state/view";
 import { THUMB_SIZE_STEP } from "../lib/defaults";
+import { qk } from "../lib/query";
+import { runnableTasks } from "../lib/sidecar";
 import { DENSITIES, MOTION_LEVELS, THEME_IDS } from "../themes";
 import { compareSelected } from "./gridKeys";
 import { targetIds } from "./targets";
@@ -46,6 +51,10 @@ export const PALETTE_COMMANDS: readonly PaletteCommand[] = [
   simple("go.library", "cmd.goLibrary", () => view().setView("library")),
   simple("go.timeline", "cmd.goTimeline", () => view().setView("timeline")),
   simple("go.trash", "cmd.goTrash", () => view().setView("trash")),
+  // Smart tools: reversible actions only (in-app trash / Recycle Bin), never permanent delete.
+  simple("go.duplicates", "cmd.goDuplicates", () => view().setView("duplicates")),
+  simple("go.cleanup", "cmd.goCleanup", () => view().setView("cleanup")),
+  simple("go.stats", "cmd.goStats", () => view().setView("stats")),
   ...LAYOUTS.map<PaletteCommand>((l) => ({
     id: `layout.${l}`,
     label: (t) => t("cmd.layout", { name: t(`layout.${l}`) }),
@@ -100,7 +109,9 @@ export const PALETTE_COMMANDS: readonly PaletteCommand[] = [
   simple("library.addFolder", "cmd.addFolder", async () => {
     await pickAndAddFolder();
   }),
-  simple("settings.open", "cmd.settings", () => view().setSettings(true)),
+  simple("settings.open", "cmd.settings", () => view().setSettings(true, "appearance")),
+  simple("settings.ai", "cmd.aiSettings", () => view().setSettings(true, "ai")),
+  simple("ai.run", "cmd.runAi", () => runAiOnLibrary(runnableTasks(cached<SidecarStatus>(qk.sidecar)))),
 ];
 
 /** Case- and diacritic-insensitive substring match on the translated label. */

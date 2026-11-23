@@ -14,6 +14,10 @@ export const SORT_FIELDS = ["taken", "name", "size", "width", "rating", "random"
 
 export type { Language };
 
+/** Timeline headers: calendar months (`get_timeline`) or capture sessions (`get_sessions`, gap = setting). */
+export const TIMELINE_GROUPS = ["month", "session"] as const;
+export type TimelineGroup = (typeof TIMELINE_GROUPS)[number];
+
 export interface Prefs {
   theme: ThemeId;
   accent: string | null;
@@ -24,6 +28,7 @@ export interface Prefs {
   layout: Layout;
   thumbSize: number;
   sort: SortSpec;
+  timelineGroup: TimelineGroup;
 }
 
 export const PREFS_KEY = "ss.prefs.v1";
@@ -38,6 +43,7 @@ export const DEFAULT_PREFS: Prefs = {
   layout: "grid",
   thumbSize: THUMB_SIZE_DEFAULT,
   sort: { field: "taken", dir: "desc" },
+  timelineGroup: "month",
 };
 
 const oneOf = <T extends string>(list: readonly T[], v: unknown, d: T): T =>
@@ -60,6 +66,7 @@ export function parsePrefs(raw: unknown): Prefs {
     layout: oneOf(LAYOUTS, r.layout, d.layout),
     thumbSize: typeof r.thumbSize === "number" ? clampThumb(r.thumbSize) : d.thumbSize,
     sort: { field: oneOf(SORT_FIELDS, sort.field, d.sort.field), dir: oneOf(["asc", "desc"] as const, sort.dir, d.sort.dir) },
+    timelineGroup: oneOf(TIMELINE_GROUPS, r.timelineGroup, d.timelineGroup),
   };
 }
 
@@ -76,7 +83,7 @@ export const usePrefs = create<PrefsStore>((set) => ({
 
 const pickPrefs = (s: Prefs): Prefs => ({
   theme: s.theme, accent: s.accent, motion: s.motion, animatedBg: s.animatedBg, density: s.density,
-  language: s.language, layout: s.layout, thumbSize: s.thumbSize, sort: s.sort,
+  language: s.language, layout: s.layout, thumbSize: s.thumbSize, sort: s.sort, timelineGroup: s.timelineGroup,
 });
 
 usePrefs.subscribe((s) => writeJson(PREFS_KEY, pickPrefs(s)));

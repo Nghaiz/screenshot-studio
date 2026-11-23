@@ -1,28 +1,37 @@
-// Top bar: search (text + mode), filters toggle, layout switch, size slider, sort, side panels, settings, palette.
+// Top bar: search (text + mode), filters toggle, layout switch (timeline: month/session grouping), size slider, sort,
+// side panels, settings, palette. Smart tools (duplicates, cleanup, dashboard) keep only the panel buttons.
 import { useEffect, useState } from "react";
 import type { SortField } from "@bindings/SortField";
 import type { TextMode } from "@bindings/TextMode";
-import { useAppInfo } from "../data/library";
+import { useAiGate } from "../data/smart";
 import { useT } from "../i18n";
 import { SEARCH_DEBOUNCE_MS, THUMB_SIZE_MAX, THUMB_SIZE_MIN, THUMB_SIZE_STEP } from "../lib/defaults";
-import { activeFilterCount } from "../lib/query";
-import { clampThumb, LAYOUTS, SORT_FIELDS, usePrefs } from "../state/prefs";
+import { activeFilterCount, isToolView } from "../lib/query";
+import type { AiGate } from "../lib/sidecar";
+import { clampThumb, LAYOUTS, SORT_FIELDS, TIMELINE_GROUPS, usePrefs } from "../state/prefs";
 import { useView } from "../state/view";
+import { gateReason } from "./AiNotice";
 
 export const SEARCH_INPUT_ID = "ss-search";
 export const TEXT_MODES = ["any", "filename", "ocr", "semantic"] as const satisfies readonly TextMode[];
-/** The sidecar capability semantic search needs (contract-sidecar-jsonrpc `embed`). */
-export const SEMANTIC_CAPABILITY = "embed";
+const OPEN: AiGate = { enabled: true, block: null };
 
 export function TopBar() {
+  const view = useView((s) => s.view);
+  return isToolView(view) ? <ToolTopBar /> : <BrowseTopBar />;
+}
+
+function BrowseTopBar() {
   const t = useT();
-  const { layout, thumbSize, sort, set } = usePrefs();
+  const { layout, thumbSize, sort, timelineGroup, set } = usePrefs();
   const view = useView((s) => s.view);
   const filter = useView((s) => s.filter);
   const filtersOpen = useView((s) => s.filtersOpen);
-  const sidePanel = useView((s) => s.sidePanel);
-  const info = useAppInfo();
-  const semanticReady = info.data?.sidecar.capabilities.includes(SEMANTIC_CAPABILITY) ?? false;
+  // The sidecar capability each AI search mode needs (contract-sidecar-jsonrpc § Degradation).
+  const semantic = useAiGate("embed");
+  const ocr = useAiGate("ocr");
+  const gateOf = (m: TextMode): AiGate => (m === "semantic" ? semantic : m === "ocr" ? ocr : OPEN);
+  const blocked = TEXT_MODES.map(gateOf).find((g) => !g.enabled);
   const timeline = view === "timeline";
   const hasText = !!filter.text?.trim();
   const sortFields: readonly SortField[] = hasText ? [...SORT_FIELDS, "relevance"] : SORT_FIELDS;
@@ -30,10 +39,11 @@ export function TopBar() {
   const active = activeFilterCount(filter);
   const v = useView.getState;
 
-  // A semantic search left over from a sidecar that went away falls back to `any` visibly (the select shows it).
+  // A semantic search left over from a sidecar that went away falls back to `any` visibly (the select shows it):
+  // the backend refuses `semantic` unless the sidecar is ready.
   useEffect(() => {
-    if (filter.textMode === "semantic" && !semanticReady) v().setFilter({ textMode: "any" });
-  }, [filter.textMode, semanticReady, v]);
+    if (filter.textMode === "semantic" && !semantic.enabled) v().dropSemantic();
+  }, [filter.textMode, semantic.enabled, v]);
 
   return (
     <header className="ss-panel flex flex-wrap items-center gap-2 px-3 py-2">
@@ -41,26 +51,42 @@ export function TopBar() {
       <select
         className="ss-input"
         aria-label={t("search.mode")}
+        title={blocked ? (gateReason(t, blocked) ?? undefined) : undefined}
         value={filter.textMode}
         onChange={(e) => v().setFilter({ textMode: e.target.value as TextMode })}
       >
-        {TEXT_MODES.map((m) => (
-          <option key={m} value={m} disabled={m === "semantic" && !semanticReady}>
-            {m === "semantic" && !semanticReady ? t("search.semanticOff") : t(`search.${m}`)}
-          </option>
-        ))}
+        {TEXT_MODES.map((m) => {
+          const g = gateOf(m);
+          const name = t(`search.${m}`);
+          return (
+            <option key={m} value={m} disabled={!g.enabled} title={gateReason(t, g) ?? undefined} data-ai-block={g.block ?? undefined}>
+              {g.enabled ? name : t(g.block === "starting" ? "search.aiStarting" : "search.needsAi", { mode: name })}
+            </option>
+          );
+        })}
       </select>
       <button type="button" className="ss-btn" aria-pressed={filtersOpen} aria-controls="ss-filter-panel" onClick={() => v().setFiltersOpen(!filtersOpen)}>
         {t("filter.toggle")}
         {active > 0 && <span data-testid="filter-count">({active})</span>}
       </button>
-      <div role="group" aria-label={t("top.layout")} className="flex gap-1">
-        {LAYOUTS.map((l) => (
-          <button key={l} type="button" className="ss-btn" aria-pressed={layout === l} disabled={timeline} onClick={() => set({ layout: l })}>
-            {t(`layout.${l}`)}
-          </button>
-        ))}
-      </div>
+      {timeline ? (
+        <div role="group" aria-label={t("top.groupBy")} className="flex items-center gap-1">
+          <span className="ss-muted text-xs">{t("top.groupBy")}</span>
+          {TIMELINE_GROUPS.map((g) => (
+            <button key={g} type="button" className="ss-btn" aria-pressed={timelineGroup === g} onClick={() => set({ timelineGroup: g })}>
+              {t(g === "month" ? "timeline.groupMonth" : "timeline.groupSession")}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div role="group" aria-label={t("top.layout")} className="flex gap-1">
+          {LAYOUTS.map((l) => (
+            <button key={l} type="button" className="ss-btn" aria-pressed={layout === l} onClick={() => set({ layout: l })}>
+              {t(`layout.${l}`)}
+            </button>
+          ))}
+        </div>
+      )}
       <label className="flex items-center gap-2 text-xs">
         <span className="ss-muted">{t("top.size")}</span>
         <input
@@ -99,6 +125,30 @@ export function TopBar() {
           {sort.dir === "asc" ? "↑" : "↓"}
         </button>
       </label>
+      <PanelButtons />
+    </header>
+  );
+}
+
+/** Smart tools have their own controls; the bar keeps the side panels (History undoes what they did). */
+function ToolTopBar() {
+  const t = useT();
+  const view = useView((s) => s.view);
+  const title = view === "duplicates" ? t("nav.duplicates") : view === "cleanup" ? t("nav.cleanup") : t("nav.stats");
+  return (
+    <header className="ss-panel flex flex-wrap items-center gap-2 px-3 py-2">
+      <h1 className="m-0 flex-1 text-base font-semibold">{title}</h1>
+      <PanelButtons />
+    </header>
+  );
+}
+
+function PanelButtons() {
+  const t = useT();
+  const sidePanel = useView((s) => s.sidePanel);
+  const v = useView.getState;
+  return (
+    <>
       <button type="button" className="ss-btn" aria-pressed={sidePanel === "details"} onClick={() => v().setSidePanel(sidePanel === "details" ? "none" : "details")}>
         {t("top.details")}
       </button>
@@ -111,7 +161,7 @@ export function TopBar() {
       <button type="button" className="ss-btn" onClick={() => v().setPalette(true)}>
         {t("top.palette")}
       </button>
-    </header>
+    </>
   );
 }
 

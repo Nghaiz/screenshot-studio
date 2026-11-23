@@ -1,4 +1,5 @@
-// Left sidebar: views, library roots and sub-folders (drop targets for move/copy), then the organize sections.
+// Left sidebar: views, smart tools, library roots and sub-folders (drop targets for move/copy; the list is
+// `get_stats().byFolder`), then the organize sections.
 import type { LibraryRoot } from "@bindings/LibraryRoot";
 import { askRemoveRoot } from "../actions/images";
 import { useFolders } from "../data/library";
@@ -13,6 +14,12 @@ const VIEWS: { id: View; key: MessageKey; icon: string }[] = [
   { id: "library", key: "nav.library", icon: "▦" },
   { id: "timeline", key: "nav.timeline", icon: "◷" },
   { id: "trash", key: "nav.trash", icon: "🗑" },
+];
+/** Smart tools: they work without the AI sidecar (duplicates, blur and stats are computed by the backend). */
+const TOOLS: { id: View; key: MessageKey; icon: string }[] = [
+  { id: "duplicates", key: "nav.duplicates", icon: "⧉" },
+  { id: "cleanup", key: "nav.cleanup", icon: "✧" },
+  { id: "stats", key: "nav.stats", icon: "▤" },
 ];
 
 const lastSegment = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
@@ -46,6 +53,17 @@ export function Sidebar({ roots }: { roots: readonly LibraryRoot[] }) {
         ))}
       </nav>
 
+      <Section title={t("nav.smart")}>
+        <nav className="flex flex-col gap-0.5" aria-label={t("nav.smart")}>
+          {TOOLS.map((v) => (
+            <NavItem key={v.id} active={view === v.id} onClick={() => useView.getState().setView(v.id)}>
+              <span aria-hidden className="w-5 text-center">{v.icon}</span>
+              {t(v.key)}
+            </NavItem>
+          ))}
+        </nav>
+      </Section>
+
       <Section title={t("nav.roots")}>
         {roots.map((r) => (
           <NavItem
@@ -76,7 +94,12 @@ export function Sidebar({ roots }: { roots: readonly LibraryRoot[] }) {
             <span className="ss-muted text-xs">{f.count}</span>
           </NavItem>
         ))}
-        {list.error && <p className="ss-muted px-2 text-xs">{t("nav.foldersUnavailable", { reason: list.error.message })}</p>}
+        {list.error && (
+          <p className="ss-muted m-0 flex items-center gap-2 px-2 text-xs" role="alert">
+            <span className="flex-1">{t("nav.foldersUnavailable", { reason: list.error.message })}</span>
+            <ToolButton label={t("nav.retry")} onClick={list.retry}>↻</ToolButton>
+          </p>
+        )}
       </Section>
 
       <SidebarOrganize />

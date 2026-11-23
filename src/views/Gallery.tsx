@@ -2,7 +2,7 @@
 // announced via aria-activedescendant), a layout body chosen by the prefs, and an optional date scrubber.
 // Pointer: click / Shift / Ctrl selection, lasso on the background, in-app drag of cells (onto sidebar
 // targets, or onto another cell to reorder an album).
-import { useCallback, useEffect, useRef, type DragEvent, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, type DragEvent, type MouseEvent } from "react";
 import { reorderAlbum } from "../actions/organize";
 import { notify } from "../actions/report";
 import { handleGridKey } from "../commands/gridKeys";
@@ -11,7 +11,8 @@ import { Cell, cellDomId } from "../components/Cell";
 import { readDragIds, setDragIds, isImageDrag } from "../lib/dnd";
 import type { ImageList } from "../data/images";
 import { useTimeline } from "../data/library";
-import { useT } from "../i18n";
+import { useSessions } from "../data/smart";
+import { translate, useT } from "../i18n";
 import { usePrefs } from "../state/prefs";
 import { useView } from "../state/view";
 import { DENSITY_GAP } from "../themes";
@@ -20,14 +21,14 @@ import { Lasso, useLasso } from "./Lasso";
 import { ListView } from "./ListView";
 import { MasonryGrid } from "./MasonryGrid";
 import { Scrubber } from "./Scrubber";
-import { TimelineGrid } from "./TimelineGrid";
+import { monthGroups, sessionGroups, TimelineGrid } from "./TimelineGrid";
 import type { LayoutProps, Nav, RenderCell } from "./types";
 import { UniformGrid } from "./UniformGrid";
 import { useElementSize } from "./useElementSize";
 
 export function Gallery({ list }: { list: ImageList }) {
   const t = useT();
-  const { layout, thumbSize, density, language } = usePrefs();
+  const { layout, thumbSize, density, language, timelineGroup } = usePrefs();
   const viewName = useView((s) => s.view);
   const focusIndex = useView((s) => s.focusIndex);
   const selection = useView((s) => s.selection);
@@ -38,6 +39,8 @@ export function Gallery({ list }: { list: ImageList }) {
   const gap = DENSITY_GAP[density];
   const isTimeline = viewName === "timeline";
   const timeline = useTimeline(list.query, isTimeline);
+  const bySession = isTimeline && timelineGroup === "session";
+  const sessions = useSessions(list.query, bySession);
 
   useEffect(() => {
     if (scrollRequest > 0) navRef.current?.scrollTo(focusIndex);
@@ -87,6 +90,15 @@ export function Gallery({ list }: { list: ImageList }) {
     [albumId, list.items, list.total],
   );
   const lasso = useLasso(scrollRef, list.items);
+  // Session headers once the sessions are known; month headers meanwhile (same order, so the indices agree). Keyed on
+  // the language, not on `t` (a new function every render would rebuild the rows and re-measure every render).
+  const groups = useMemo(
+    () =>
+      bySession && sessions.data
+        ? sessionGroups(sessions.data, language, (key, vars) => translate(language, key, vars))
+        : monthGroups(timeline.data ?? [], language),
+    [bySession, sessions.data, timeline.data, language],
+  );
 
   const renderCell: RenderCell = (index, style, variant) => {
     const item = list.items[index];
@@ -115,7 +127,7 @@ export function Gallery({ list }: { list: ImageList }) {
   const props: LayoutProps = { scrollRef, width: Math.max(0, size.width - 2 * gap), height: size.height, list, thumbSize, gap, navRef, renderCell };
   const buckets = timeline.data ?? [];
   const body = isTimeline ? (
-    <TimelineGrid {...props} buckets={buckets} lang={language} />
+    <TimelineGrid {...props} groups={groups} />
   ) : layout === "masonry" ? (
     <MasonryGrid {...props} />
   ) : layout === "justified" ? (

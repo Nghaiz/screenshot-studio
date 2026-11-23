@@ -1,8 +1,10 @@
-// Timeline: month header rows + uniform item rows, built from `get_timeline` buckets (sort = taken desc),
-// with a date scrubber on the right that jumps to a month.
+// Timeline: group header rows + uniform item rows (sort = taken desc). Groups are `get_timeline` month buckets or
+// `get_sessions` capture sessions (prefs `timelineGroup`); a date scrubber on the right jumps to a month.
 import { useEffect, useLayoutEffect, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import type { ImageSession } from "@bindings/ImageSession";
 import type { TimelineBucket } from "@bindings/TimelineBucket";
+import type { Translate } from "../i18n";
 import { TIMELINE_HEADER_HEIGHT } from "../lib/defaults";
 import { moveRows, rowOf, timelineRows, uniformGeometry } from "./layout";
 import type { LayoutProps } from "./types";
@@ -10,14 +12,33 @@ import type { LayoutProps } from "./types";
 export const monthLabel = (ms: number, lang: string) =>
   new Date(ms).toLocaleDateString(lang, { month: "long", year: "numeric" });
 
-interface Props extends LayoutProps {
-  buckets: readonly TimelineBucket[];
-  lang: string;
+/** A header group: a bucket of the date-sorted list plus its label. */
+export interface TimelineGroup extends TimelineBucket {
+  label: string;
 }
 
-export function TimelineGrid({ scrollRef, width, height, list, thumbSize, gap, navRef, renderCell, buckets, lang }: Props) {
+export const monthGroups = (buckets: readonly TimelineBucket[], lang: string): TimelineGroup[] =>
+  buckets.map((b) => ({ ...b, label: monthLabel(b.startMs, lang) }));
+
+/** Sessions newest first; a session header shows its day and its first and last capture times. */
+export function sessionGroups(sessions: readonly ImageSession[], lang: string, t: Translate): TimelineGroup[] {
+  const time = (ms: number) => new Date(ms).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" });
+  return sessions.map((s) => {
+    const date = new Date(s.startMs).toLocaleDateString(lang, { weekday: "short", day: "numeric", month: "long", year: "numeric" });
+    const from = time(s.startMs);
+    const to = time(s.endMs);
+    const label = from === to ? t("timeline.sessionAt", { date, time: from }) : t("timeline.sessionRange", { date, from, to });
+    return { startMs: s.startMs, count: s.imageIds.length, label };
+  });
+}
+
+interface Props extends LayoutProps {
+  groups: readonly TimelineGroup[];
+}
+
+export function TimelineGrid({ scrollRef, width, height, list, thumbSize, gap, navRef, renderCell, groups }: Props) {
   const { cols, cell } = uniformGeometry(list.total, width, thumbSize, gap);
-  const rows = useMemo(() => timelineRows(buckets, cols), [buckets, cols]);
+  const rows = useMemo(() => timelineRows(groups, cols), [groups, cols]);
   const v = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -58,8 +79,9 @@ export function TimelineGrid({ scrollRef, width, height, list, thumbSize, gap, n
         const style = { transform: `translateY(${vr.start}px)` };
         if (row.kind === "header") {
           return (
-            <h2 key={vr.key} className="absolute left-0 top-0 flex items-end gap-2 text-base font-semibold" style={{ ...style, height: TIMELINE_HEADER_HEIGHT - 8 }}>
-              {monthLabel(row.startMs, lang)} <span className="ss-muted text-xs font-normal">{row.count}</span>
+            <h2 key={vr.key} data-testid="timeline-header" className="absolute left-0 top-0 flex items-end gap-2 text-base font-semibold"
+              style={{ ...style, height: TIMELINE_HEADER_HEIGHT - 8 }}>
+              {groups[row.group]?.label} <span className="ss-muted text-xs font-normal">{row.count}</span>
             </h2>
           );
         }

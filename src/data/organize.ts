@@ -20,6 +20,11 @@ export function refresh(...keys: (readonly unknown[])[]): void {
   for (const queryKey of [qk.imagesAll, qk.counts, qk.journal, ...keys]) void client.invalidateQueries({ queryKey });
 }
 
+/** The cached value of a query, for actions outside React (palette commands); undefined when never read. */
+export function cached<T>(key: readonly unknown[]): T | undefined {
+  return client?.getQueryData<T>(key);
+}
+
 export const useTags = () => useQuery({ queryKey: qk.tags, queryFn: () => call("list_tags") });
 export const useAlbums = () => useQuery({ queryKey: qk.albums, queryFn: () => call("list_albums") });
 export const useSmartFilters = () => useQuery({ queryKey: qk.smartFilters, queryFn: () => call("list_smart_filters") });

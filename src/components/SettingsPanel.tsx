@@ -1,10 +1,17 @@
-// Appearance settings (all stored in localStorage, D9): theme, accent, motion, animated background,
-// density, language.
-import type { ReactNode } from "react";
+// Settings panel, two tabs. Appearance (all stored in localStorage, D9): theme, accent, motion, animated background,
+// density, language. AI (phase 3.3): sidecar status, device, setup commands, "Run AI on library"; lazy-loaded, so it
+// costs nothing until opened.
+import { lazy, Suspense, type ReactNode } from "react";
 import { LANGUAGES, useT } from "../i18n";
 import { usePrefs } from "../state/prefs";
-import { useView } from "../state/view";
+import { useView, type SettingsTab } from "../state/view";
 import { DENSITIES, MOTION_LEVELS, prefersReducedMotion, THEME_IDS } from "../themes";
+
+const AiSettings = lazy(() => import("./settings/AiSettings"));
+const TABS: { id: SettingsTab; key: "settings.tabAppearance" | "settings.tabAi" }[] = [
+  { id: "appearance", key: "settings.tabAppearance" },
+  { id: "ai", key: "settings.tabAi" },
+];
 
 export function SettingsPanel() {
   const open = useView((s) => s.settingsOpen);
@@ -14,14 +21,14 @@ export function SettingsPanel() {
 
 function SettingsBody() {
   const t = useT();
-  const p = usePrefs();
+  const tab = useView((s) => s.settingsTab);
   const close = () => useView.getState().setSettings(false);
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-label={t("settings.title")}
-      className="ss-panel fixed right-4 top-16 z-30 flex max-h-[80vh] w-80 flex-col gap-4 overflow-y-auto p-4 text-sm"
+      className="ss-panel fixed right-4 top-16 z-30 flex max-h-[80vh] w-96 flex-col gap-4 overflow-y-auto p-4 text-sm"
       onKeyDown={(e) => e.key === "Escape" && close()}
     >
       <div className="flex items-center">
@@ -30,7 +37,33 @@ function SettingsBody() {
           ✕
         </button>
       </div>
+      <div role="tablist" aria-label={t("settings.tabs")} className="flex gap-1">
+        {TABS.map((x) => (
+          <button key={x.id} type="button" role="tab" id={`ss-settings-tab-${x.id}`} aria-selected={tab === x.id}
+            aria-controls="ss-settings-tabpanel" className="ss-btn" aria-pressed={tab === x.id}
+            onClick={() => useView.getState().setSettings(true, x.id)}>
+            {t(x.key)}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id="ss-settings-tabpanel" aria-labelledby={`ss-settings-tab-${tab}`} className="flex flex-col gap-4">
+        {tab === "ai" ? (
+          <Suspense fallback={<div className="ss-shimmer h-24 w-full rounded" aria-busy="true" />}>
+            <AiSettings />
+          </Suspense>
+        ) : (
+          <Appearance />
+        )}
+      </div>
+    </div>
+  );
+}
 
+function Appearance() {
+  const t = useT();
+  const p = usePrefs();
+  return (
+    <>
       <Field label={t("settings.theme")}>
         <div className="grid grid-cols-2 gap-1">
           {THEME_IDS.map((id) => (
@@ -72,7 +105,7 @@ function SettingsBody() {
       <Field label={t("settings.language")}>
         <Choice values={LANGUAGES} current={p.language} label={(l) => t(`lang.${l}`)} onPick={(language) => p.set({ language })} />
       </Field>
-    </div>
+    </>
   );
 }
 

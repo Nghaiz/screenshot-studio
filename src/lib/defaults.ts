@@ -41,3 +41,30 @@ export const DRAG_MIME = "application/x-ss-image-ids";
 export const LASSO_MIN_PX = 4;
 /** A grid cell must stay mounted this long before its thumbnail is fetched and decoded (see Cell.tsx). */
 export const THUMB_SETTLE_MS = 150;
+
+// ---- phase 3.3: AI sidecar, smart tools ----------------------------------------------------------
+
+/** `sidecarVenv: null` means this venv (ss-core `sidecar::config::DEFAULT_SIDECAR_VENV`). */
+export const DEFAULT_SIDECAR_VENV = String.raw`D:\IOT_Tools\data\ScreenshotStudio\sidecar-venv`;
+/** Model cache the app hands the sidecar when HF_HOME is unset (ss-core `DEFAULT_HF_HOME`, design-intent). */
+export const DEFAULT_HF_HOME = String.raw`D:\DevCache\huggingface`;
+/** Source checkout holding `sidecar/` (design-intent § Names and paths). */
+export const SOURCE_DIR = String.raw`D:\Screenshot_Picture`;
+/**
+ * The degraded-mode banner appears only after the sidecar has stayed `absent`/`error` this long, so a passing
+ * state (the supervisor's initial "not started" before launch) never flashes it. `starting` never shows it.
+ */
+export const AI_NOTICE_SETTLE_MS = 1000;
+/** Similar-duplicate Hamming distance (design-intent § Defaults, setting `dupHamming`). */
+export const DUP_HAMMING_DEFAULT = 6;
+/** Slider range of the similar mode; the backend accepts 0..64, past ~20 dHash groups unrelated screenshots. */
+export const DUP_HAMMING_MAX = 20;
+/** Pause after the last slider move before `find_duplicates` runs again. */
+export const DUP_SLIDER_DEBOUNCE_MS = 250;
+/** Thumbnail edge in the duplicate finder and the cleanup previews, px (the 320 thumbnail, shown smaller). */
+export const SMART_THUMB_PX = 150;
+/** In-app trash older than this is offered to the Recycle Bin by the cleanup wizard. */
+export const OLD_TRASH_DAYS = 30;
+/** Thumbnails shown per cleanup step. */
+export const WIZARD_PREVIEW_COUNT = 8;
+export const DAY_MS = 86_400_000;

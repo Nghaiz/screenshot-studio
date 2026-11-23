@@ -5,4 +5,6 @@ interface ImportMetaEnv {
   readonly VITE_MOCK_IPC?: string;
   /** "1" starts the mock with no library root, to see the first-run screen. */
   readonly VITE_MOCK_FIRST_RUN?: string;
+  /** "ready" starts the mock with a ready AI sidecar (default: absent, the degraded mode). */
+  readonly VITE_MOCK_SIDECAR?: string;
 }

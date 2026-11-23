@@ -2,7 +2,7 @@
 // element gets a viewport-sized box for the virtualizer). Not a test file: vitest only collects *.test.tsx.
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, expect } from "vitest";
-import { installMockIpc, type MockCall, type MockHandle } from "../mocks/ipc";
+import { installMockIpc, type MockCall, type MockHandle, type MockOptions } from "../mocks/ipc";
 import { createQueryClient, Root } from "../Root";
 import { DEFAULT_PREFS, usePrefs, type Prefs } from "../state/prefs";
 import { useView } from "../state/view";
@@ -15,7 +15,7 @@ export const PURGE_COMMANDS = ["request_permanent_delete", "delete_permanently"]
 const initialView = useView.getState();
 
 /** Installs the mock before each test; `get()` returns the current handle. */
-export function useMockApp(prefs: Partial<Prefs> = {}): { get: () => MockHandle } {
+export function useMockApp(prefs: Partial<Prefs> = {}, options: MockOptions = {}): { get: () => MockHandle } {
   let mock: MockHandle;
   beforeAll(() => {
     Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => W });
@@ -30,7 +30,7 @@ export function useMockApp(prefs: Partial<Prefs> = {}): { get: () => MockHandle 
     localStorage.clear();
     usePrefs.setState({ ...DEFAULT_PREFS, motion: "off", animatedBg: false, ...prefs });
     useView.setState({ ...initialView, selection: new Set(), jobs: {}, toasts: [], dialog: null }, true);
-    mock = installMockIpc();
+    mock = installMockIpc(options);
   });
   afterEach(() => {
     cleanup();

@@ -1,9 +1,16 @@
 // ImageQuery construction and TanStack Query keys. Every list query is keyed by its ImageQuery (cursor = null).
+import type { DuplicateMode } from "@bindings/DuplicateMode";
 import type { ImageQuery } from "@bindings/ImageQuery";
 import type { SortSpec } from "@bindings/SortSpec";
 import { PAGE_LIMIT } from "./defaults";
 
-export type View = "library" | "timeline" | "trash";
+/** Views that browse an image list (the gallery). */
+export type BrowseView = "library" | "timeline" | "trash";
+/** Smart tools (phase 3.3): their own main area instead of the gallery, lazy-loaded (Shell.tsx). */
+export type ToolView = "duplicates" | "cleanup" | "stats";
+export type View = BrowseView | ToolView;
+export const TOOL_VIEWS = ["duplicates", "cleanup", "stats"] as const satisfies readonly ToolView[];
+export const isToolView = (v: View): v is ToolView => (TOOL_VIEWS as readonly string[]).includes(v);
 
 /** The user-chosen part of a query (search bar, filter panel, sidebar); sort and paging come from elsewhere. */
 export type FilterSpec = Omit<ImageQuery, "sort" | "cursor" | "limit" | "includeMissing">;
@@ -69,4 +76,13 @@ export const qk = {
   albums: ["albums"] as const,
   smartFilters: ["smartFilters"] as const,
   journal: ["journal"] as const,
+  settings: ["settings"] as const,
+  sidecar: ["sidecar"] as const,
+  duplicatesAll: ["duplicates"] as const,
+  duplicates: (mode: DuplicateMode, hamming: number | null) => ["duplicates", mode, hamming] as const,
+  sessionsAll: ["sessions"] as const,
+  sessions: (q: ImageQuery) => ["sessions", q] as const,
+  issues: ["issues"] as const,
+  /** In-app trash older than the cleanup wizard's cutoff; under `images` so every list refresh covers it. */
+  oldTrash: ["images", "oldTrash"] as const,
 };

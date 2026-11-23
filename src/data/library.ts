@@ -20,15 +20,19 @@ export function useTimeline(query: ImageQuery, enabled: boolean) {
   });
 }
 
+/** `get_stats`: aggregates computed by the backend (sidebar folders, dashboard, category counts). */
+export const useStats = () => useQuery({ queryKey: qk.stats, queryFn: () => call("get_stats"), retry: false });
+
 /**
- * Sub-folders come from `get_stats().byFolder`. Until the backend implements `get_stats` (phase 3.2) the
- * query fails and the sidebar shows that reason instead of guessing a list.
+ * Sub-folders come from `get_stats().byFolder` (folder relative to its root, "" = the root itself). A failed read
+ * shows its reason with a retry instead of a guessed list; `library-changed` re-reads it too.
  */
 export function useFolders() {
-  const q = useQuery({ queryKey: qk.stats, queryFn: () => call("get_stats"), retry: false });
+  const q = useStats();
   return {
     folders: q.data?.byFolder.map((f) => ({ name: f.key, count: f.count })) ?? null,
     error: q.error ? toAppError(q.error) : null,
+    retry: () => void q.refetch(),
   };
 }
 
