@@ -7,6 +7,7 @@
 //!   (OneDrive downloads it on demand, as Explorer does); a missing file -> 404.
 //! - Anything else -> 400. A 200 carries `Cache-Control: max-age=31536000, immutable` (the UI adds
 //!   `?v=<mtimeMs>`, which is ignored here).
+//! - The path is percent-decoded first: `convertFileSrc` sends `thumb/12/320` as `/thumb%2F12%2F320`.
 
 use std::io::Read;
 
@@ -47,8 +48,30 @@ enum Route {
     Full { id: i64 },
 }
 
+/// Decodes `%XX` escapes. The UI builds every URL with Tauri's `convertFileSrc`, which applies
+/// `encodeURIComponent` to the whole path, so `thumb/12/320` arrives as `/thumb%2F12%2F320`.
+/// `None` on a malformed escape or a non-UTF-8 result.
+fn percent_decode(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
 fn parse(path: &str) -> Option<Route> {
-    let path = path.split(['?', '#']).next().unwrap_or_default().trim_start_matches('/');
+    let raw = path.split(['?', '#']).next().unwrap_or_default();
+    let decoded = percent_decode(raw)?;
+    let path = decoded.trim_start_matches('/');
     let parts: Vec<&str> = path.split('/').collect();
     let int = |s: &str| s.parse::<i64>().ok().filter(|v| *v > 0);
     match parts.as_slice() {

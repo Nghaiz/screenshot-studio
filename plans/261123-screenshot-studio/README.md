@@ -30,7 +30,19 @@ Uncertainties (by impact):
 3. CUDA torch/onnxruntime on this driver -> `python -c` import probe inside phase 3.1 step 2, ~15 min (download dominates).
 4. VS Build Tools honouring `--installPath` on D: with the shared path fixed on C: -> phase 0 dry-run prints the exact command; the verifier checks `link.exe` path.
 Kill / no-regression: kill P3 GPU path (keep CPU) if CUDA import fails twice; kill Vietnamese OCR via RapidOCR and switch to the PaddleOCR fallback named in the design if the spike's character accuracy is < 85%; stop P1 at 1.4 if fps p50 < 45 and fix virtualization before P2. Rollback: every phase is a local git branch merged by an integration phase; revert = `git revert` of the merge commit; phase 0 rollback = uninstall listed in `phase-0.md` § Rollback.
-Re-score: none yet.
+Re-score (phase 1.4, 2026-11-23, `node scripts/accept/p1.mjs` 8/8 PASS, release build with the UI embedded, real library):
+- Indexed count == files on disk: MEASURED PASS, 6,260 = 6,260. The library grew from 5,683 when the OneDrive client
+  restarted and synced 576 more placeholders (old screenshots), then one new screenshot; 598 files are cloud-only.
+  The count is only right after an index: no watcher until 4.1.
+- Grid fps: MEASURED PASS, p50 4.20 ms (238 fps, high-refresh display), p95 4.40 ms over a 10 s top-to-bottom scroll of
+  6,260 items (252,769 px). The 55% estimate is resolved; the "stop P1 if p50 < 45 fps" kill criterion is far off.
+- Cold start to first grid thumbnail: MEASURED PASS, 738 ms (design metric < 2 s; LCP timing of the first thumbnail).
+- Footprint (measured, budgets per Deferred decisions #29 and #31): app exe 11.7 MB, ssctl 5.6 MB; catalog 2.8 MB;
+  thumbnails 1,315.6 MB (lossless, 2 sizes; target ~41 MB from 2.1); app + WebView2 private memory 360 MB at first
+  screen, 1,208 MB after a full scroll (budget <= 500 MB, gated in 2.3).
+- Index speed: release `ssctl` generated 5,161 thumbnails in 73 s (the debug build: ~1.3/s).
+- New risk found: the app's release build needs `RUSTC_WRAPPER=""` (sccache + 41,000-char rustc command line, os
+  error 206, docs/lessons.md). Phase 1.4 P1 confidence: done (Accept green); P2 confidence unchanged at 65%.
 Not checked: ts-rs 12 `#[ts(type)]` behaviour on Option/Vec fields (from library knowledge; contract_test bans `bigint` to catch it); Tauri raw-body IPC + headers API; `tauri-plugin-drag` version; Rust/Tauri build on this machine (Rust not installed yet); WebView2 CDP attach in a dev build; RapidOCR Vietnamese; OneDrive Files On-Demand state of the 5,604 files (how many are cloud-only); SigLIP i18n quality on Vietnamese queries; NSIS `/D=` with currentUser mode on D:.
 
 ## Finish ETA
@@ -166,6 +178,7 @@ Corpus sweep: `t1k-corpus-scout` reported the knowledge-retrieval MCP not presen
 | 28 | Rust toolchain install | REUSE | `rustup-init.exe` from `https://win.rustup.rs/x86_64` (HTTP 200, 2026-11-23), honours `RUSTUP_HOME`/`CARGO_HOME` |
 | 29 | MSVC linker + Windows SDK | REUSE | winget `Microsoft.VisualStudio.BuildTools` 18.12.1, workload `Microsoft.VisualStudio.Workload.VCTools` `--includeRecommended`, `--installPath` |
 | 38 | Drag-out of originals to Explorer | REUSE | `tauri-plugin-drag` + npm `@crabnebula/tauri-plugin-drag` (versions UNCONFIRMED; cook confirms via context7 before 1.1 adds it) |
+| 39 | Lossy WebP thumbnails (phase 2.1) | REUSE | crate `webp` 0.3.1 (libwebp via `libwebp-sys` ^0.9.3; `Encoder::from_rgb(..).encode(80.0)`; crates.io + docs.rs, 2026-11-23), `default-features = false`; added to the manifests by phase 1.4 (D3) |
 | 30 | Installer + Start Menu entry | EXTEND | Tauri NSIS bundler (`bundle.windows.nsis`: `installMode`, `startMenuFolder`) plus the `/D=` install-dir switch (no config key for a default install dir) |
 | 31 | Machine Rust-on-D: setup + verifier | NEW | `scripts/setup-rust-machine.ps1`, `scripts/verify-rust-machine.mjs` |
 | | | | reuse-search: not-found-after-corpus-and-grep |
@@ -235,7 +248,7 @@ Ordered irreversible / costliest first.
 | 12 | Sidecar packaging | Tauri `externalBin` exe / uv venv spawned by Rust | uv venv at `D:\IOT_Tools\data\ScreenshotStudio\sidecar-venv`, sidecar source bundled as a Tauri resource | a PyInstaller bundle with torch would be several GB inside the NSIS installer | swap D6 + phase 3.2 supervisor launch code |
 | 13 | NSIS install dir D: | config key / `/D=` switch / custom template | `installMode: currentUser` + `/D=D:\IOT_Tools\apps\ScreenshotStudio` on the install command; NSIS restores the previous dir on upgrade | the schema has no install-dir property (fact-fetcher, Tauri config schema 2.12.7) | add `installerHooks` later |
 | 14 | Image delivery to webview | asset protocol + dynamic scope / custom scheme | custom async scheme `ssimg` | one mechanism for thumbs and originals, no broad fs scope | D5 |
-| 15 | Thumbnail sizes | - | WebP long edge 320 px (grid) and 1280 px (lightbox preview); original for zoom > 100% | two sizes cover grid and lightbox | constants in `ss-core::thumbs` |
+| 15 | Thumbnail sizes | - | WebP long edge 320 px (grid) and 1280 px (lightbox preview); original for zoom > 100% (format and when each size is made: superseded by #29 from phase 2.1) | two sizes cover grid and lightbox | constants in `ss-core::thumbs` |
 | 16 | Text search | LIKE / FTS5 | FTS5 `unicode61 remove_diacritics 2` over file name + OCR + note | diacritic-insensitive is in the design | - |
 | 17 | Vector storage | vector DB / SQLite BLOB + brute force | float32 BLOB in SQLite, cosine in Rust | 5,604 x 768 floats is ~17 MB, brute force is ms | add an index later if > 100k |
 | 18 | Duplicate detection location | Python / Rust | Rust (`blake3` exact + `image_hasher` dHash, Hamming <= 6 default) | works without the sidecar | constant `DUP_HAMMING_DEFAULT` |
@@ -248,6 +261,9 @@ Ordered irreversible / costliest first.
 | 26 | Integer typing in TS bindings | per-field ts override / ts-rs config | explicit override per field shape (`number`, `number | null`, `number[]`), `bigint` banned by test | `#[ts(type)]` replaces the whole type, so `Option`/`Vec` need their own string | contract-tauri-ipc rule 3 |
 | 27 | Container deletions (root/tag/album/filter) | journal + undo / confirm only | confirm dialog, not journaled, never touches files | undoing a cascade of tags/notes needs a snapshot store, YAGNI for a catalog-only loss | add a soft-delete column later |
 | 28 | Remote + CI | local only / GitHub + Actions | public `Nghaiz/screenshot-studio` (owner chose public over private on 2026-11-23), SSH remote `origin`, one PR per phase, squash-merge on green CI; CI on push to `main` and on PRs: `ui` job (lane runner over `src/**/*.test.ts`, `npm run build`) and `rust` job (lane runner over the contract test, `cargo test --workspace`, `cargo build -p screenshot-studio`), both `windows-latest` | owner asked for it in the session of 2026-11-23, overriding the earlier local-only rule | `git remote remove origin` and delete the repo |
+| 29 | Thumbnail format and generation | keep lossless WebP 320 + 1280 at index / lossy WebP q80 320 at index + 1280 on first view / JPEG q82 | lossy WebP q80 (crate `webp` 0.3.1, added by phase 1.4 per D3), 320 at index, 1280 generated on first `ssimg` request and cached; implemented in phase 2.1, not 1.4 | MEASURED in 1.4 (2026-11-23, 60 real screenshots, Pillow/libwebp): lossless 320 + 1280 = ~240 KB/image, ~1.3 GB for 5,683 images, ~850 ms encode/image; lossy q80 320 = 7.3 KB (~41 MB), ~41 ms; JPEG q82 320 = 11.6 KB (~65 MB). Owner chose WebP q80 and phase 2.1 over fixing it in 1.4 | contract-sqlite-schema.md § thumbnails; the `thumbsFORMAT` marker forces one regeneration |
+| 30 | App lib crate types | Tauri template `staticlib` + `cdylib` + `rlib` / `rlib` only | `rlib` only (phase 1.4) | Windows desktop only; the exe links the rlib. Under `lto = true` + `codegen-units = 1` each extra crate type is another fat-LTO pass: the 1.4 release build of `screenshot_studio_lib` aborted (0xC0000409) at 1.2 GB free commit | add the types back in `src-tauri/Cargo.toml` if a mobile target is ever added |
+| 31 | Memory budget | none / measure only / budget | app + WebView2 private bytes <= 500 MB after scrolling the whole library; UI side in 2.2, `ssimg` cache header in 2.1, gated by `p2.mjs` in 2.3 | MEASURED in 1.4: 360 MB at first screen, 1,208 MB after a full scroll of 6,260 thumbnails; owner chose a budget fixed in 2.2 (2026-11-23) | change the number in phase-2.3 step 5 |
 | 24 | Merge-up tree | tree / flat | flat lane plan (tree preflight hard-stopped: not a git repo; see `## Tree step`) | no repo yet, and never a remote or PR; lanes merge locally per D7 | re-plan after 1.1 if wanted |
 
 

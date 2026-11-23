@@ -3,6 +3,56 @@
 Non-obvious gotchas found while building Screenshot Studio. Owner rule: lessons stay in this repo, nothing goes
 to a kit. Newest first. One entry: what happened, why, what to do.
 
+## 2026-11-23 — phase 1.4
+
+### Debug `ssctl` is far too slow for a real-library index
+- **Seen:** the debug `ssctl index` made ~1.3 thumbnails/s on real 1080p+ PNGs (5,661 files would take ~70 min).
+- **Why:** the dev profile leaves `image`, `png`/`fdeflate` and `fast_image_resize` unoptimized. Decoding is
+  the hot path, and unoptimized decode runs 10-30x slower.
+- **Do:** use `cargo build --release -p ss-core --bin ssctl` for a large index. Stopping an index part-way is
+  safe: pending thumbnails stay `pending` and the next `ssctl index` resumes them.
+
+### The index can die from system commit exhaustion, not from a bug
+- **Seen:** `memory allocation of 4926244 bytes failed`, exit 0xC0000409, at thumbnail 919 of 5,661.
+- **Why:** the machine had 0.5 GB of its 47.7 GB commit limit free while a release `rustc` LTO build ran
+  next to the index (RAM was not full, the page-file-backed commit limit was).
+- **Do:** do not run a release build and a big index at the same time; check free commit with
+  `(Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory` before a long run.
+
+### Every thumbnail answered 400 in the real app: `convertFileSrc` percent-encodes `/`
+- **Seen:** release app on a 50-image fixture: the grid showed placeholders, the console showed one
+  `400 (Bad Request)` per thumbnail.
+- **Why:** `src/lib/ssimg.ts` builds URLs with `convertFileSrc('thumb/<id>/<w>', 'ssimg')`, which applies
+  `encodeURIComponent` to the path, so `ssimg` received `/thumb%2F12%2F320`, and `ssimg::parse` split on a
+  literal `/`. Each lane was green alone: 1.2 tests called `ssimg("/thumb/12/320")`, 1.3 tests mocked the URLs.
+- **Do:** `ssimg::parse` percent-decodes first; `index_test` sends the encoded form (seen red without the fix).
+  When a test stands in for the other side of a boundary, feed it the exact bytes the other side produces.
+
+### sccache breaks the release app build: command line too long (os error 206)
+- **Seen:** `could not compile screenshot-studio (lib)`; cargo's summary only showed the rustc command. Run cargo
+  directly to see the cause: `sccache: caused by: The filename or extension is too long. (os error 206)`.
+- **Why:** cargo 1.100 passes one `-L dependency=target\release\build\<crate>\<hash>\out` per crate (370 here),
+  so the app crate's rustc command line is ~41,000 chars, above the Windows limit of 32,767. Cargo puts a long
+  command line in an `@argfile` when it calls rustc itself, but sccache 0.19 spawns rustc with the full line.
+- **Do:** build the app with `RUSTC_WRAPPER=""` (empty overrides `build.rustc-wrapper`). Only the app crate
+  rebuilt (fingerprints do not include the wrapper). `scripts/accept/lib/run.mjs` does this. Two earlier failures
+  of this crate, blamed on memory, may have been this.
+
+### `cargo build -p a --bin x -p b` silently skips b's binary
+- **Seen:** the app showed `not implemented (get_app_info lands in phase 1.2)`: a phase-1.1 exe, although cargo
+  printed `Finished` and recompiled `ss-core`.
+- **Why:** a `--bin` filter applies to every `-p` package, so only `ssctl` was linked and the old
+  `screenshot-studio.exe` stayed on disk.
+- **Do:** use `--bins`, or one cargo call per package (`scripts/accept/lib/run.mjs` does the latter). Check an
+  exe's timestamp when a fix "does not show up".
+
+### Measure speed on the release build with the UI embedded
+- The debug exe needed 8.9 s to expose CDP, and debug thumbnailing was ~70x slower than release, so debug
+  numbers say nothing about the product. `p1.mjs` builds `vite build` + `cargo build --release -p
+  screenshot-studio --features tauri/custom-protocol` (UI embedded, page at `http://tauri.localhost`).
+- A cold release build took 24 min 51 s with `-j 4`. The default job count ran out of commit memory here (see
+  the commit-exhaustion entry above); set `CARGO_BUILD_JOBS=4` before `node scripts/accept/p1.mjs` on this machine.
+
 ## 2026-11-23 — phase 1.1
 
 ### Vitest finds no suite when the cwd drive letter is lowercase

@@ -23,6 +23,12 @@ backend lands in 2.3).
   selection; bulk rename dialog with live `preview_rename` and conflict highlighting.
 - Undo: Ctrl+Z, toast with "Undo" after every op, history panel (`list_journal`).
 - Confirm dialogs for the non-undoable catalog deletions (remove root, delete tag/album/smart filter), naming what is lost (rule 7).
+- Memory budget (README Deferred decision #31, owner 2026-11-23): app + WebView2 private bytes <= 500 MB after
+  scrolling the whole library. Measured in 1.4 on 6,260 images: 360 MB once the first screen shows, 1,208 MB after a
+  full top-to-bottom scroll (Blink keeps every loaded thumbnail, `ssimg` answers `immutable, max-age=31536000`).
+  Find where the memory goes before changing anything (CDP `Memory.getDOMCounters` / `performance.memory`, image count
+  in memory cache), then fix the UI side (e.g. release `src` of cells far outside the viewport, decode at display
+  size); the header side is 2.1's. Gate: `p2.mjs` check `memory` (phase 2.3).
 - Trash view (in-app trash, restore, "Move to Recycle Bin"), and the permanent delete dialog exactly per
   `design-intent.md` § Safety: separate dialog, count + size + 6 thumbnails, typed `DELETE`, red button disabled until
   typed, never focused by default, calls `request_permanent_delete` then `delete_permanently`.
