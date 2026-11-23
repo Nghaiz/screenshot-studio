@@ -23,7 +23,7 @@ So: **always paste the common context line** after the command. You do not need 
 ### Common context line (paste after every command)
 
 ```
-Context: read the plan README.md (Decision register, Contract, Deferred decisions, Human steps) and design-intent.md first; the contract*.md files are the source of truth — do not edit them unless this phase is 1.1 or an integration phase (1.4, 2.3, 3.4, 4.3). Stay inside this phase's Owns: globs. Work on branch phase-<id>, run the phase's Accept command and show its output, then merge --ff-only into main. Local git only: no remote, no push. Personal project: no Plane, no PR, no review agents.
+Context: read the plan README.md (Decision register, Contract, Deferred decisions, Human steps) and design-intent.md first; the contract*.md files are the source of truth — do not edit them unless this phase is 1.1 or an integration phase (1.4, 2.3, 3.4, 4.3). Stay inside this phase's Owns: globs. Work on branch phase-<id>, run the phase's Accept command and show its output, then merge --ff-only into main. After the merge, git push origin main (private GitHub repo) and check the CI run is green. Personal project: no Plane, no PR, no review agents.
 ```
 
 ## Commands
