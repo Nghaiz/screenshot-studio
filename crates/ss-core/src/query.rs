@@ -1,15 +1,15 @@
 //! Read queries behind `query_images`, `get_image`, `get_timeline` and `get_counts`.
 //!
-//! Every `ImageQuery` filter is built by [`crate::filter::build`] (phase 2.1; `semantic` text is
-//! refused until 3.2). Paging is keyset-based: the opaque cursor carries the last row's sort key and
-//! id, so every id is returned exactly once.
+//! Every `ImageQuery` filter is built by [`crate::filter::build_with`] (phase 2.1; the semantic arm's
+//! scores come from `AppCore`, phase 3.2). Paging is keyset-based: the opaque cursor carries the last
+//! row's sort key and id, so every id is returned exactly once.
 
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::{Deserialize, Serialize};
 
 use crate::catalog;
-use crate::filter::{self, FilterSql};
+use crate::filter::{self, FilterSql, SemanticScores};
 use crate::contract::AppError;
 use crate::contract::ipc::*;
 use crate::errors::{enum_str, invalid, not_found, now_ms, parse_enum};
@@ -142,10 +142,15 @@ fn json_to_sql(v: &serde_json::Value) -> Result<Value, AppError> {
 }
 
 pub fn query_images(conn: &Connection, q: &ImageQuery) -> Result<ImagePage, AppError> {
+    query_images_with(conn, q, None)
+}
+
+/// [`query_images`] with the semantic arm's scores (see [`crate::filter`]).
+pub fn query_images_with(conn: &Connection, q: &ImageQuery, sem: Option<&SemanticScores>) -> Result<ImagePage, AppError> {
     if !(1..=LIMIT_MAX).contains(&q.limit) {
         return Err(invalid(format!("limit must be 1..{LIMIT_MAX}, got {}", q.limit)));
     }
-    let FilterSql { from, filter, params: filter_params, relevance } = filter::build(q)?;
+    let FilterSql { from, filter, params: filter_params, relevance } = filter::build_with(q, sem)?;
     let cursor = q.cursor.as_deref().map(decode_cursor).transpose()?;
     if let Some(c) = &cursor {
         if c.f != q.sort.field || c.d != q.sort.dir {
@@ -243,11 +248,16 @@ pub fn get_image(conn: &Connection, id: i64) -> Result<ImageDetail, AppError> {
 
 /// Buckets by local calendar day or month of `taken_ms`; `startMs` is the bucket's local midnight.
 pub fn get_timeline(conn: &Connection, req: &GetTimelineReq) -> Result<TimelineResult, AppError> {
+    get_timeline_with(conn, req, None)
+}
+
+/// [`get_timeline`] with the semantic arm's scores.
+pub fn get_timeline_with(conn: &Connection, req: &GetTimelineReq, sem: Option<&SemanticScores>) -> Result<TimelineResult, AppError> {
     let fmt = match req.bucket {
         TimelineBucketSize::Day => "%Y-%m-%d",
         TimelineBucketSize::Month => "%Y-%m-01",
     };
-    let FilterSql { from, filter, params, .. } = filter::build(&req.query)?;
+    let FilterSql { from, filter, params, .. } = filter::build_with(&req.query, sem)?;
     let sql = format!(
         "SELECT CAST(strftime('%s', k, 'utc') AS INTEGER) * 1000, n FROM (
            SELECT strftime('{fmt}', i.taken_ms / 1000, 'unixepoch', 'localtime') AS k, count(*) AS n
@@ -258,6 +268,15 @@ pub fn get_timeline(conn: &Connection, req: &GetTimelineReq) -> Result<TimelineR
         .query_map(params_from_iter(&params), |r| Ok(TimelineBucket { start_ms: r.get(0)?, count: r.get(1)? }))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(TimelineResult { buckets })
+}
+
+/// `(id, taken_ms)` of every row matching the query's filters (paging ignored): the input of
+/// `get_sessions`.
+pub fn taken_of(conn: &Connection, q: &ImageQuery, sem: Option<&SemanticScores>) -> Result<Vec<(i64, i64)>, AppError> {
+    let FilterSql { from, filter, params, .. } = filter::build_with(q, sem)?;
+    let mut stmt = conn.prepare(&format!("SELECT i.id, i.taken_ms {from} WHERE {filter}"))?;
+    let rows = stmt.query_map(params_from_iter(&params), |r| Ok((r.get(0)?, r.get(1)?)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 // ---------------------------------------------------------------------------------------------

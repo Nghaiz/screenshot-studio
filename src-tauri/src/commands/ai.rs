@@ -1,41 +1,50 @@
-#![allow(unused_variables)] // stubs: `req` must keep its name, it is the IPC argument key (rule 1)
+//! AI sidecar, AI job and smart features. Thin wrappers over `ss_core::AppCore` (phase 3.2).
+
+use std::sync::Arc;
 
 use ss_core::contract::AppError;
 use ss_core::contract::ipc::*;
+use tauri::{AppHandle, State};
 
-use super::not_implemented;
+use crate::state::{AppState, TauriSink, blocking};
 
 #[tauri::command]
-pub async fn get_sidecar_status() -> Result<SidecarStatus, AppError> {
-    not_implemented("get_sidecar_status", "3.2")
+pub async fn get_sidecar_status(state: State<'_, AppState>) -> Result<SidecarStatus, AppError> {
+    Ok(state.core.get_sidecar_status())
 }
 
 #[tauri::command]
-pub async fn restart_sidecar() -> Result<SidecarStatus, AppError> {
-    not_implemented("restart_sidecar", "3.2")
+pub async fn restart_sidecar(state: State<'_, AppState>) -> Result<SidecarStatus, AppError> {
+    let core = state.core.clone();
+    blocking(move || core.restart_sidecar()).await
 }
 
 #[tauri::command]
-pub async fn start_ai(req: StartAiReq) -> Result<JobStarted, AppError> {
-    not_implemented("start_ai", "3.2")
+pub async fn start_ai(req: StartAiReq, state: State<'_, AppState>, app: AppHandle) -> Result<JobStarted, AppError> {
+    let core = state.core.clone();
+    blocking(move || core.start_ai(req, Arc::new(TauriSink { app }))).await
 }
 
 #[tauri::command]
-pub async fn find_duplicates(req: FindDuplicatesReq) -> Result<DuplicateResult, AppError> {
-    not_implemented("find_duplicates", "3.2")
+pub async fn find_duplicates(req: FindDuplicatesReq, state: State<'_, AppState>) -> Result<DuplicateResult, AppError> {
+    let core = state.core.clone();
+    blocking(move || core.find_duplicates(req)).await
 }
 
 #[tauri::command]
-pub async fn get_sessions(req: GetSessionsReq) -> Result<SessionsResult, AppError> {
-    not_implemented("get_sessions", "3.2")
+pub async fn get_sessions(req: GetSessionsReq, state: State<'_, AppState>) -> Result<SessionsResult, AppError> {
+    let core = state.core.clone();
+    blocking(move || core.get_sessions(req)).await
 }
 
 #[tauri::command]
-pub async fn detect_issues(req: DetectIssuesReq) -> Result<IssuesResult, AppError> {
-    not_implemented("detect_issues", "3.2")
+pub async fn detect_issues(req: DetectIssuesReq, state: State<'_, AppState>) -> Result<IssuesResult, AppError> {
+    let core = state.core.clone();
+    blocking(move || core.detect_issues(req)).await
 }
 
 #[tauri::command]
-pub async fn detect_pii(req: ImageIdReq) -> Result<PiiResult, AppError> {
-    not_implemented("detect_pii", "3.2")
+pub async fn detect_pii(req: ImageIdReq, state: State<'_, AppState>) -> Result<PiiResult, AppError> {
+    let core = state.core.clone();
+    blocking(move || core.detect_pii(req)).await
 }
