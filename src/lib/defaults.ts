@@ -39,3 +39,5 @@ export const PURGE_PREVIEW_COUNT = 6;
 export const DRAG_MIME = "application/x-ss-image-ids";
 /** A pointer drag shorter than this (px) on the grid background is a click, not a lasso. */
 export const LASSO_MIN_PX = 4;
+/** A grid cell must stay mounted this long before its thumbnail is fetched and decoded (see Cell.tsx). */
+export const THUMB_SETTLE_MS = 150;

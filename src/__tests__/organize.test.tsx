@@ -1,7 +1,9 @@
 // Phase 2.2 organize UI against the mock IPC: the filter panel builds the exact ImageQuery, tags, bulk rename
 // with conflicts, undo (Ctrl+Z, toast, history), smart filters, confirm dialogs for catalog-only deletions.
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { useSettled } from "../components/Cell";
+import { THUMB_SETTLE_MS } from "../lib/defaults";
 import type { ImageQuery } from "@bindings/ImageQuery";
 import type { OpResult } from "@bindings/OpResult";
 import { albumOrder } from "../views/Gallery";
@@ -210,5 +212,35 @@ describe("organize", () => {
     expect(albumOrder([1, 2, 3, 4, 5], [1, 3], 5)).toEqual([2, 4, 1, 3, 5]);
     expect(albumOrder([1, 2, 3], [2], 3)).toBeNull(); // already right before the target
     expect(albumOrder([1, 2, 3], [2], 2)).toBeNull();
+  });
+});
+
+describe("grid memory (Deferred decision #31)", () => {
+  it("a cell gets its thumbnail only after it stayed mounted THUMB_SETTLE_MS, per image", () => {
+    vi.useFakeTimers();
+    try {
+      const { result, rerender, unmount } = renderHook(({ id }) => useSettled(id, THUMB_SETTLE_MS), { initialProps: { id: 7 as number | undefined } });
+      expect(result.current).toBe(false);
+      act(() => vi.advanceTimersByTime(THUMB_SETTLE_MS - 1));
+      expect(result.current).toBe(false);
+      act(() => vi.advanceTimersByTime(1));
+      expect(result.current).toBe(true);
+      rerender({ id: 8 }); // the virtualizer reused the cell for another image: wait again
+      expect(result.current).toBe(false);
+      rerender({ id: undefined });
+      act(() => vi.advanceTimersByTime(THUMB_SETTLE_MS * 2));
+      expect(result.current).toBe(false);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the deferral does not hold thumbnails back once cells have settled", async () => {
+    await renderApp(); // waits until thumbnails are shown
+    const grid = screen.getByRole("grid");
+    const shown = grid.querySelectorAll("img").length;
+    expect(shown).toBeGreaterThan(0);
+    expect(shown).toBeLessThanOrEqual(grid.querySelectorAll("[data-item]").length);
   });
 });
