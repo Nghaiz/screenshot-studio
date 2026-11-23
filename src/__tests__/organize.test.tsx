@@ -6,6 +6,7 @@ import { useSettled } from "../components/Cell";
 import { THUMB_SETTLE_MS } from "../lib/defaults";
 import type { ImageQuery } from "@bindings/ImageQuery";
 import type { OpResult } from "@bindings/OpResult";
+import { MOCK_SIDECAR_READY } from "../mocks/smart";
 import { albumOrder } from "../views/Gallery";
 import { callsOf, cell, cmds, lastCall, renderApp, reqOf, useMockApp } from "./harness";
 
@@ -16,6 +17,9 @@ describe("search and filter panel", () => {
   it("builds the exact ImageQuery from every control (snapshot of the query_images req)", async () => {
     const tag = mock().invoke("create_tag", { name: "Work", color: "#22C55E" });
     await renderApp();
+    // The AI-derived filters (colour, category, has text) are usable once the sidecar is ready (degraded.test.tsx
+    // covers the other states).
+    await act(() => mock().emit("sidecar-status", MOCK_SIDECAR_READY));
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "  invoice " } });
     fireEvent.change(screen.getByRole("combobox", { name: "Search mode" }), { target: { value: "filename" } });
     fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
@@ -31,7 +35,9 @@ describe("search and filter panel", () => {
     fireEvent.click(p.getByRole("checkbox", { name: "Filter by colour" }));
     fireEvent.change(p.getByLabelText("Pick a colour"), { target: { value: "#ff0000" } });
     fireEvent.change(p.getByRole("slider", { name: "Colour tolerance" }), { target: { value: "30" } });
-    fireEvent.change(p.getByLabelText("Category"), { target: { value: "chat, receipt" } });
+    const categories = p.getByRole("group", { name: "Category" });
+    fireEvent.click(within(categories).getByRole("button", { name: "Chat" }));
+    fireEvent.click(within(categories).getByRole("button", { name: "Receipt" }));
     fireEvent.click(p.getByRole("checkbox", { name: "Favourites only" }));
     fireEvent.change(p.getByRole("combobox", { name: "Minimum rating" }), { target: { value: "2" } });
     fireEvent.change(p.getByRole("combobox", { name: "Has text" }), { target: { value: "no" } });

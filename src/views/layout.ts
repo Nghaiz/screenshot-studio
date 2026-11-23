@@ -72,16 +72,20 @@ function makeRow(start: number, end: number, height: number, aspect: (i: number)
 
 // ---- timeline -------------------------------------------------------------------------------
 
+/** `group`: index of the bucket the header opens (its label comes from the caller: month or capture session). */
 export type TimelineRow =
-  | { kind: "header"; startMs: number; count: number; firstIndex: number }
+  | { kind: "header"; startMs: number; count: number; firstIndex: number; group: number }
   | ({ kind: "items" } & Row);
 
-/** Buckets in display order (newest first) -> a header row per bucket, then rows of `cols` items. */
+/**
+ * Buckets in display order (newest first) -> a header row per bucket, then rows of `cols` items. Buckets are month
+ * buckets (`get_timeline`) or capture sessions (`get_sessions`): both partition the same date-sorted list.
+ */
 export function timelineRows(buckets: readonly TimelineBucket[], cols: number): TimelineRow[] {
   const rows: TimelineRow[] = [];
   let index = 0;
-  for (const b of buckets) {
-    rows.push({ kind: "header", startMs: b.startMs, count: b.count, firstIndex: index });
+  for (const [group, b] of buckets.entries()) {
+    rows.push({ kind: "header", startMs: b.startMs, count: b.count, firstIndex: index, group });
     for (let s = index; s < index + b.count; s += cols) rows.push({ kind: "items", start: s, end: Math.min(s + cols, index + b.count) });
     index += b.count;
   }

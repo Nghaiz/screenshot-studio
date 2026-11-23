@@ -2,6 +2,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { AppInfo } from "@bindings/AppInfo";
+import type { SidecarStatus } from "@bindings/SidecarStatus";
 import { subscribe } from "../lib/events";
 import { qk } from "../lib/query";
 import { useView } from "../state/view";
@@ -21,6 +22,9 @@ export function useBackendEvents(): void {
       void qc.invalidateQueries({ queryKey: qk.tags });
       void qc.invalidateQueries({ queryKey: qk.albums });
       void qc.invalidateQueries({ queryKey: qk.journal });
+      void qc.invalidateQueries({ queryKey: qk.duplicatesAll });
+      void qc.invalidateQueries({ queryKey: qk.sessionsAll });
+      void qc.invalidateQueries({ queryKey: qk.issues });
       if (e.imageIds === null) void qc.invalidateQueries({ queryKey: ["image"] });
       else for (const id of e.imageIds) void qc.invalidateQueries({ queryKey: qk.image(id) });
     });
@@ -29,10 +33,16 @@ export function useBackendEvents(): void {
       view.jobProgress(p);
       if (p.finished) setTimeout(() => useView.getState().clearJob(p.jobId), FINISHED_JOB_LINGER_MS);
     });
-    // The sidecar's capabilities decide whether semantic search is offered (TopBar).
-    const offSidecar = subscribe("sidecar-status", (status) => {
-      qc.setQueryData<AppInfo>(qk.appInfo, (old) => (old ? { ...old, sidecar: status } : old));
-    });
+    // The sidecar's state and capabilities gate every AI control (data/smart.ts `useSidecarStatus`). Once the
+    // listener is live the status is read again: a transition emitted before that (launch -> starting) is lost.
+    const offSidecar = subscribe(
+      "sidecar-status",
+      (status) => {
+        qc.setQueryData<SidecarStatus>(qk.sidecar, status);
+        qc.setQueryData<AppInfo>(qk.appInfo, (old) => (old ? { ...old, sidecar: status } : old));
+      },
+      () => void qc.invalidateQueries({ queryKey: qk.sidecar }),
+    );
     return () => {
       offChanged();
       offJob();

@@ -3,6 +3,35 @@
 Non-obvious gotchas found while building Screenshot Studio. Owner rule: lessons stay in this repo, nothing goes
 to a kit. Newest first. One entry: what happened, why, what to do.
 
+## 2026-11-24 — phase 3.3
+
+### The mock and the backend can disagree on list order the contract never fixed
+- **Seen:** the dashboard's month chart put its years out of order (2023 … 2025 2024 2026). The mock's `countBy`
+  sorts by count, ss-core `smart::stats` sends `byMonth`/`byFolder` by key and the rest largest first; the UI drew
+  whatever order arrived, and every test passed because none read the order.
+- **Do:** when the contract does not pin an order, the UI sorts for its own purpose (`oldestFirst`, `largestFirst`
+  in `StatsDashboard.tsx`) and the mock copies the backend's `ORDER BY` (`byKey` in `mocks/ipc.ts`). A visual check
+  of the mock dev server caught this; screenshot new views before calling them done.
+
+### `useT()` returns a new function every render: never a memo dependency for virtualizer rows
+- **Why:** rows rebuilt on every render make TanStack Virtual re-measure, which renders again: a loop.
+- **Do:** key the memo on `language` and call `translate(language, key, vars)` inside it (`Gallery.tsx`).
+
+### `attempt()` cannot tell a failure from a command that answers `null`
+- **Seen:** `set_setting` answers `null`, so `attempt(() => call("set_setting", ...))` looked failed on success.
+- **Do:** wrap such calls to return an explicit marker (`async () => { await call(...); return true; }`).
+
+### A "never flashes" test must hold a passing state, then check the state machine
+- **Seen:** a mutation setting the banner's settle delay to 0 stayed green: the test only waited for the banner to be
+  absent at the end.
+- **Do:** emit the passing state (`absent`), wait half the settle delay, move on (`starting`), then assert
+  `aiNotice` is still `pending`. Run the guard-breaking mutation once to prove the test can go red.
+
+### Git Bash heredocs choke on some TS/JS bodies
+- **Seen:** `python - <<'EOF'` and `cat > file <<'EOF'` with template literals or `\\${...}` failed ("unexpected EOF
+  while looking for matching `'`") or silently rewrote backslashes, so nothing (or the wrong text) was written.
+- **Do:** write the helper script with the Write tool into the scratchpad, then run it.
+
 ## 2026-11-24 — phase 3.2
 
 ### A test double that dies in a worker thread hangs the test instead of failing it

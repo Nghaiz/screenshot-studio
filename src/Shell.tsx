@@ -1,9 +1,10 @@
-// Main layout once a library root exists: sidebar | top bar / filters / action bar / gallery / status bar |
-// side panel, plus overlays and the one open organize dialog.
+// Main layout once a library root exists: sidebar | top bar / AI notice / filters / action bar / gallery (or a smart
+// tool, lazy-loaded) / status bar | side panel, plus overlays and the one open organize dialog.
 import { useMemo } from "react";
 import type { AppInfo } from "@bindings/AppInfo";
 import { useGlobalKeys } from "./commands/globalKeys";
 import { ActionBar } from "./components/ActionBar";
+import { AiBanner } from "./components/AiNotice";
 import { CommandPalette } from "./components/CommandPalette";
 import { Dialogs } from "./components/dialogs/Dialogs";
 import { FilterPanel } from "./components/FilterPanel";
@@ -15,10 +16,11 @@ import { SidePanel } from "./components/SidePanels";
 import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
 import { useImageList } from "./data/images";
-import { buildQuery } from "./lib/query";
+import { buildQuery, isToolView } from "./lib/query";
 import { usePrefs } from "./state/prefs";
 import { useView } from "./state/view";
 import { Gallery } from "./views/Gallery";
+import { ToolView } from "./views/ToolView";
 
 export function Shell({ info }: { info: AppInfo }) {
   const view = useView((s) => s.view);
@@ -37,9 +39,16 @@ export function Shell({ info }: { info: AppInfo }) {
       <Sidebar roots={info.libraryRoots} />
       <main className="flex min-w-0 flex-1 flex-col gap-2">
         <TopBar />
-        <FilterPanel />
-        <ActionBar list={list} />
-        <Gallery list={list} />
+        <AiBanner />
+        {isToolView(view) ? (
+          <ToolView view={view} />
+        ) : (
+          <>
+            <FilterPanel />
+            <ActionBar list={list} />
+            <Gallery list={list} />
+          </>
+        )}
         <StatusBar total={list.total} />
       </main>
       <SidePanel list={list} />

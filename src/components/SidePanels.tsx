@@ -1,4 +1,4 @@
-// Right side panel: details of the focused image (tag chips, albums, favourite, stars, note) or the undo history
+// Right side panel: details of the focused image (tag chips, category chips, albums, favourite, stars, note) or the undo history
 // (`list_journal`; every undoable batch has its own Undo button, Ctrl+Z undoes the latest one).
 import { useEffect, useState } from "react";
 import type { ImageDetail } from "@bindings/ImageDetail";
@@ -7,8 +7,11 @@ import { setNote, setTags } from "../actions/organize";
 import type { ImageList } from "../data/images";
 import { useImageDetail } from "../data/library";
 import { useJournal } from "../data/organize";
+import { useAiGate } from "../data/smart";
 import { useT } from "../i18n";
+import { categoryName } from "../lib/categories";
 import { useView } from "../state/view";
+import { gateReason } from "./AiNotice";
 
 export function SidePanel({ list }: { list: ImageList }) {
   const panel = useView((s) => s.sidePanel);
@@ -60,6 +63,7 @@ function DetailBody({ d }: { d: ImageDetail }) {
           <button type="button" className="ss-btn" onClick={() => useView.getState().openDialog({ kind: "tags", ids: [d.id] })}>＋</button>
         </div>
       </div>
+      <Categories d={d} />
       {d.albums.length > 0 && (
         <div className="flex flex-col gap-1">
           <span className="ss-muted text-xs font-semibold uppercase">{t("nav.albums")}</span>
@@ -72,6 +76,32 @@ function DetailBody({ d }: { d: ImageDetail }) {
           onBlur={() => note !== (d.note ?? "") && void setNote(d.id, note)} />
       </label>
     </section>
+  );
+}
+
+/** Zero-shot categories of the image (best first, as stored); a click filters the library by that category. */
+function Categories({ d }: { d: ImageDetail }) {
+  const t = useT();
+  const gate = useAiGate("classify");
+  if (d.categories.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="ss-muted text-xs font-semibold uppercase">{t("details.categories")}</span>
+      <div className="flex flex-wrap gap-1" data-testid="category-chips">
+        {d.categories.map((c) => {
+          const name = categoryName(t, c.label);
+          const score = <span className="opacity-70">{Math.round(c.score * 100)}%</span>;
+          return gate.enabled ? (
+            <button key={c.label} type="button" className="ss-chip" aria-label={t("details.categoryFilter", { name })}
+              onClick={() => useView.getState().setFilter({ categories: [c.label] })}>
+              {name} {score}
+            </button>
+          ) : (
+            <span key={c.label} className="ss-chip" title={gateReason(t, gate) ?? undefined}>{name} {score}</span>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

@@ -1,14 +1,20 @@
 // Filter panel: every ImageQuery filter of feature group 2 as a control. Each control writes one field of
 // the view's FilterSpec; Shell turns it into the exact `query_images` req (organize.test snapshots it).
+// The AI-derived filters (has text: OCR; categories: zero-shot; colour: dominant colour) are disabled with a tooltip
+// and a short marker unless the sidecar is ready with that capability (contract-sidecar-jsonrpc § Degradation).
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AspectClass } from "@bindings/AspectClass";
 import type { TagMatch } from "@bindings/TagMatch";
 import type { TrashFilter } from "@bindings/TrashFilter";
-import { useFolders } from "../data/library";
+import { useFolders, useStats } from "../data/library";
 import { useTags } from "../data/organize";
+import { useAiGate } from "../data/smart";
 import { useT } from "../i18n";
+import { categoryChoices, categoryName } from "../lib/categories";
 import { DEFAULT_COLOR_TOLERANCE } from "../lib/defaults";
+import type { AiGate } from "../lib/sidecar";
 import { useView } from "../state/view";
+import { AiGated, gateReason, gateShort } from "./AiNotice";
 
 export const ASPECTS = ["phone", "pc", "square", "wide", "other"] as const satisfies readonly AspectClass[];
 const TRASH_FILTERS = ["exclude", "include", "only"] as const satisfies readonly TrashFilter[];
@@ -45,6 +51,12 @@ function FilterBody() {
   const inTrash = useView((s) => s.view === "trash");
   const tags = useTags();
   const { folders } = useFolders();
+  const stats = useStats();
+  const ocr = useAiGate("ocr");
+  const classify = useAiGate("classify");
+  const color = useAiGate("color");
+  const categoryCount = new Map((stats.data?.byCategory ?? []).map((c) => [c.key, c.count]));
+  const categories = categoryChoices(stats.data?.byCategory.map((c) => c.key) ?? [], f.categories);
   const set = useView.getState().setFilter;
   const toggleIn = <T,>(list: readonly T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
@@ -110,22 +122,33 @@ function FilterBody() {
         </select>
       </Field>
 
-      <Field label={t("filter.color")}>
-        <div className="flex items-center gap-2">
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={f.color !== null}
-              onChange={(e) => set(e.target.checked ? { color: DEFAULT_FILTER_COLOR, colorTolerance: f.colorTolerance || DEFAULT_COLOR_TOLERANCE } : { color: null, colorTolerance: 0 })} />
-            {t("filter.colorOn")}
-          </label>
-          <input type="color" aria-label={t("filter.colorPick")} disabled={f.color === null} value={f.color ?? DEFAULT_FILTER_COLOR} onChange={(e) => set({ color: e.target.value.toUpperCase() })} />
-        </div>
-        <input type="range" min={0} max={100} aria-label={t("filter.colorTolerance")} disabled={f.color === null} value={f.colorTolerance}
-          onChange={(e) => set({ colorTolerance: Number(e.target.value) })} />
+      <Field label={t("filter.color")} gate={color}>
+        <AiGated gate={color}>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={f.color !== null} disabled={!color.enabled}
+                onChange={(e) => set(e.target.checked ? { color: DEFAULT_FILTER_COLOR, colorTolerance: f.colorTolerance || DEFAULT_COLOR_TOLERANCE } : { color: null, colorTolerance: 0 })} />
+              {t("filter.colorOn")}
+            </label>
+            <input type="color" aria-label={t("filter.colorPick")} disabled={!color.enabled || f.color === null} value={f.color ?? DEFAULT_FILTER_COLOR} onChange={(e) => set({ color: e.target.value.toUpperCase() })} />
+          </div>
+          <input type="range" min={0} max={100} aria-label={t("filter.colorTolerance")} disabled={!color.enabled || f.color === null} value={f.colorTolerance}
+            onChange={(e) => set({ colorTolerance: Number(e.target.value) })} />
+        </AiGated>
       </Field>
 
-      <Field label={t("filter.category")}>
-        <DraftInput label={t("filter.category")} placeholder={t("filter.categoryHint")} value={f.categories.join(", ")}
-          onChange={(v) => set({ categories: v.split(",").map((s) => s.trim()).filter(Boolean) })} />
+      <Field label={t("filter.category")} gate={classify}>
+        <AiGated gate={classify}>
+          <div role="group" aria-label={t("filter.category")} className="flex flex-wrap gap-1">
+            {categories.map((c) => (
+              <button key={c} type="button" className="ss-btn" aria-pressed={f.categories.includes(c)} disabled={!classify.enabled}
+                onClick={() => set({ categories: toggleIn(f.categories, c) })}>
+                {categoryName(t, c)}
+                {categoryCount.has(c) && <span aria-hidden className="opacity-70">{categoryCount.get(c)}</span>}
+              </button>
+            ))}
+          </div>
+        </AiGated>
       </Field>
 
       <Field label={t("filter.other")}>
@@ -138,12 +161,16 @@ function FilterBody() {
             <option key={n} value={n}>{n === 0 ? t("filter.anyRating") : t("filter.ratingAtLeast", { n })}</option>
           ))}
         </select>
-        <select className="ss-input" aria-label={t("filter.hasText")} value={f.hasText === null ? "any" : f.hasText ? "yes" : "no"}
-          onChange={(e) => set({ hasText: e.target.value === "any" ? null : e.target.value === "yes" })}>
-          <option value="any">{t("filter.hasTextAny")}</option>
-          <option value="yes">{t("filter.hasTextYes")}</option>
-          <option value="no">{t("filter.hasTextNo")}</option>
-        </select>
+        <AiGated gate={ocr}>
+          <select className="ss-input" aria-label={t("filter.hasText")} disabled={!ocr.enabled} title={gateReason(t, ocr) ?? undefined}
+            value={f.hasText === null ? "any" : f.hasText ? "yes" : "no"}
+            onChange={(e) => set({ hasText: e.target.value === "any" ? null : e.target.value === "yes" })}>
+            <option value="any">{t("filter.hasTextAny")}</option>
+            <option value="yes">{t("filter.hasTextYes")}</option>
+            <option value="no">{t("filter.hasTextNo")}</option>
+          </select>
+        </AiGated>
+        {!ocr.enabled && <span className="ss-muted" data-testid="ai-marker">{gateShort(t, ocr)}</span>}
         <select className="ss-input" aria-label={t("filter.trash")} disabled={inTrash} value={inTrash ? "only" : f.trash}
           onChange={(e) => set({ trash: e.target.value as TrashFilter })}>
           {TRASH_FILTERS.map((x) => (
@@ -164,10 +191,18 @@ function FilterBody() {
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+/** `gate`: an AI-derived filter; while it is off the label carries a short marker and the reason as tooltip. */
+function Field({ label, gate, children }: { label: string; gate?: AiGate; children: ReactNode }) {
+  const t = useT();
+  const short = gate ? gateShort(t, gate) : null;
   return (
     <div className="flex flex-col gap-1">
-      <span className="ss-muted font-semibold uppercase tracking-wide">{label}</span>
+      <span className="ss-muted flex items-center gap-2 font-semibold uppercase tracking-wide">
+        {label}
+        {short && gate && (
+          <span className="ss-ai-tag normal-case" title={gateReason(t, gate) ?? undefined} data-testid="ai-marker">{short}</span>
+        )}
+      </span>
       {children}
     </div>
   );
