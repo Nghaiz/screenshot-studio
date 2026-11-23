@@ -1,0 +1,38 @@
+# Screenshot Studio AI sidecar (JSON-RPC 2.0 over stdio, contract-sidecar-jsonrpc.md).
+# Manifest only in phase 1.1 (D3): `uv sync --project sidecar` runs in phase 3.1 after the download approval,
+# into the venv D:\IOT_Tools\data\ScreenshotStudio\sidecar-venv (UV_PROJECT_ENVIRONMENT).
+# Frozen after 1.1: only the integration phases (1.4, 2.3, 3.4, 4.3) edit this file (D2).
+
+[project]
+name = "ss-sidecar"
+version = "0.1.0"
+description = "Screenshot Studio AI sidecar: OCR, SigLIP embeddings, zero-shot, colour, PII"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "rapidocr>=3.10.0",
+  "onnxruntime",
+  "open_clip_torch>=4.2.2",
+  "torch>=2.15.0",
+  # open_clip_torch depends on torchvision; it must come from the same CUDA index as torch,
+  # or PyPI's CPU torchvision pins a CPU torch and the resolve conflicts.
+  "torchvision",
+  "pillow",
+  "numpy",
+  "jsonschema",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.uv]
+# Not an installable package: Rust runs `python -m ss_sidecar` with cwd = the sidecar source dir (D6).
+package = false
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu132" }]
+torchvision = [{ index = "pytorch-cu132" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true

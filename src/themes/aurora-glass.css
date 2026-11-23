@@ -1,0 +1,19 @@
+/* Theme `aurora-glass` (default). Contract of a theme file: design-intent.md § Look and motion. */
+[data-theme="aurora-glass"] {
+  --ss-bg:
+    radial-gradient(60rem 40rem at 10% -10%, rgb(56 189 248 / 0.35), transparent 60%),
+    radial-gradient(50rem 36rem at 100% 0%, rgb(168 85 247 / 0.35), transparent 60%),
+    radial-gradient(56rem 40rem at 50% 120%, rgb(16 185 129 / 0.28), transparent 60%),
+    #0b1020;
+  --ss-surface: rgb(255 255 255 / 0.08);
+  --ss-surface-blur: 18px;
+  --ss-text: #e6ecff;
+  --ss-muted: #9aa6c8;
+  --ss-accent: #7dd3fc;
+  --ss-accent-contrast: #04111d;
+  --ss-border: rgb(255 255 255 / 0.14);
+  --ss-radius: 16px;
+  --ss-shadow: 0 20px 60px rgb(0 0 0 / 0.45);
+  --ss-motion-scale: 1;
+  color-scheme: dark;
+}
