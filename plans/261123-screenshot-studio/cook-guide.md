@@ -40,7 +40,7 @@ Plan dir: `D:\Screenshot_Picture\plans\261123-screenshot-studio`
 | 5 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-2.1-core-organize.md` | File ops, permanent delete |
 | 6 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-2.2-ui-organize.md` | |
 | 7 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-2.3-installer.md` | **Human:** approve install to `D:\IOT_Tools\apps\ScreenshotStudio`. After this, "Screenshot Studio" is in Windows Search. DONE 2026-11-24 (PR #7): installed to D:, Start Menu shortcut, found in Windows Search, single-instance, WebView2 data on D:; `p2.mjs` 11/11 PASS (gated scroll peak 496-497 MB, no headroom; visit-all 790-797 MB is INFO only: orchestrator decision in Deferred decision #31, reversible) |
-| 8 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-3.1-sidecar.md` | AI downloads (~4–5 GB on D:) already approved on 2026-11-23: say so if asked |
+| 8 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-3.1-sidecar.md` | AI downloads (~4–5 GB on D:) already approved on 2026-11-23: say so if asked. DONE 2026-11-24 (PR #8): venv + SigLIP weights on D:, `--selftest` ok on CUDA; OCR spike 87.4% (RapidOCR kept) with a known Vietnamese tone-letter gap (Deferred decision #19); lane Accept 3/3 PASS |
 | 9 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-3.2-core-smart.md` | |
 | 10 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-3.3-ui-smart.md` | |
 | 11 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-3.4-p3-integration.md` | |
