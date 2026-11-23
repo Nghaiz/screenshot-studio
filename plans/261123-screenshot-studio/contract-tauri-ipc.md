@@ -146,9 +146,14 @@ Throttle: `job-progress` at most 10 per second per job; the final event has `fin
 ## Image URLs (`ssimg` async custom scheme, D5)
 
 - Built in the UI ONLY by `src/lib/ssimg.ts`: `convertFileSrc('thumb/' + id + '/' + w, 'ssimg')` and `convertFileSrc('full/' + id, 'ssimg')`
-  (on Windows these resolve to `http://ssimg.localhost/thumb/<id>/<w>` and `http://ssimg.localhost/full/<id>`).
+  (on Windows these resolve to `http://ssimg.localhost/thumb%2F<id>%2F<w>` and `http://ssimg.localhost/full%2F<id>`:
+  `convertFileSrc` applies `encodeURIComponent` to the path, so the handler percent-decodes the path before routing;
+  found and fixed in phase 1.4, where every thumbnail of the real app answered 400).
 - `w` is `320` or `1280` only; anything else -> 400. Unknown id -> 404. Thumbnail not yet generated -> 202 with an
   empty body and header `x-thumb-state: pending|offline` (UI shows a shimmer placeholder and listens for `library-changed`).
+- From phase 2.1 (contract-sqlite-schema.md § thumbnails, Deferred decision #29): a `1280` request for an image whose
+  320 thumbnail is `ok` and whose 1280 file is absent generates it synchronously from the original (lossy WebP q80),
+  stores it and answers 200; a cloud-only original is never opened for it (202 `offline`, rule 9).
 - Cache: `Cache-Control: max-age=31536000, immutable` with the URL suffix `?v=<mtimeMs>` added by `ssimg.ts`.
 - CSP: `img-src 'self' http://ssimg.localhost ssimg: data: blob:`.
 

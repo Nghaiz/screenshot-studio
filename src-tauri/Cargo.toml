@@ -8,7 +8,9 @@ authors.workspace = true
 [lib]
 # `_lib` suffix keeps the lib name distinct from the bin name (cargo#8519 on Windows).
 name = "screenshot_studio_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# rlib only: the Windows exe links the lib as an rlib. staticlib/cdylib are the Tauri template's iOS/Android
+# outputs; with fat LTO each one costs a full LTO pass, and the release build ran out of memory (phase 1.4).
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build.workspace = true

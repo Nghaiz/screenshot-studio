@@ -5,8 +5,8 @@ Depends-on: 1.4
 Steps: lane-decides
 Effort: L
 Owns: `crates/**`, `src-tauri/**` (except the frozen contract paths in README D2)
-Creates: `crates/ss-core/tests/query_test.rs`, `crates/ss-core/tests/fileops_test.rs`, `crates/ss-core/tests/delete_safety_test.rs`
-Accept: `node scripts/accept/lane-tests.mjs crates/ss-core/tests/query_test.rs crates/ss-core/tests/fileops_test.rs crates/ss-core/tests/delete_safety_test.rs`
+Creates: `crates/ss-core/tests/query_test.rs`, `crates/ss-core/tests/fileops_test.rs`, `crates/ss-core/tests/delete_safety_test.rs`, `crates/ss-core/tests/thumbs_format_test.rs`
+Accept: `node scripts/accept/lane-tests.mjs crates/ss-core/tests/query_test.rs crates/ss-core/tests/fileops_test.rs crates/ss-core/tests/delete_safety_test.rs crates/ss-core/tests/thumbs_format_test.rs`
 
 ## Goal
 
@@ -26,6 +26,20 @@ Recycle Bin with undo, the two-step permanent delete, the undo journal.
   the row (journaled), into a root adds it.
 - Protected roots (rule 8, path-based): file writes whose source or destination is under a protected root or a `\OneDrive\` path need `Caller::Ui` and always journal;
   `ssctl` write subcommands (`edit`, `undo`) refuse images of a `protectedRoot` root; `index`/`ai` write catalog rows only, never files. Implement the 2.1 rows of the `ssctl` surface in `design-intent.md`.
+- Thumbnails (README Deferred decision #29, contract-sqlite-schema.md § thumbnails): switch `ss-core::thumbs` to lossy
+  WebP q80 with crate `webp` (`webp::Encoder::from_rgb(&rgb, w, h).encode(80.0)`, already in the manifests since 1.4);
+  the index makes the 320 file only; `ssimg` makes the 1280 file on first request and keeps it; a missing or different
+  `<data>\thumbs\FORMAT` marker makes the next index delete old thumbnail files and regenerate them once (phase 1.4 indexed the real
+  library with lossless files, ~1.3 GB; target after regeneration: ~41 MB for 5,683 images).
+- Cloud-only retry (bug found in 1.4, owner deferred it here): a read of a cloud-only file that fails while the
+  file is still cloud-only (OneDrive client not running, offline) is written as `error` by `thumbs::write_outcomes`,
+  and `run_cloud_download` only resets `offline` rows, so the image can never be retried. Fix: after a failed read,
+  re-check the cloud attributes and write `offline` when the file is still cloud-only; `run_cloud_download` also
+  resets `cloudOnly` rows in `error`. The real catalog has 22 such rows from 1.4 (OneDrive was stopped): after the
+  fix, the owner presses "Download cloud-only files" again (or `download_cloud_only` for root 1).
+- Memory budget (Deferred decision #31, with phase 2.2): review the `ssimg` cache header
+  (`Cache-Control: max-age=31536000, immutable`) for its share of the 1,208 MB measured after a full scroll in 1.4;
+  a header change is a contract change, so it goes through the Owner (contract-tauri-ipc § Image URLs).
 - Permanent delete: `request_permanent_delete` stores `{token -> (sorted ids, expiresAt)}` in memory only (60 s);
   `delete_permanently` requires the same token, unexpired, and `typedConfirmation == "DELETE"`; deletes with
   `std::fs::remove_file`; journal op `purge`, `undoable = 0`; tokens are single-use.
@@ -38,6 +52,12 @@ Recycle Bin with undo, the two-step permanent delete, the undo journal.
 `delete_safety_test.rs`: no token -> `confirmationRequired`; wrong word -> `confirmationRequired`; expired token ->
 `confirmationRequired`; token for set A used with set B impossible (token binds the set); reused token -> error; only the
 happy path removes files; `undo` of a `purge` batch -> `invalidArgument`. Each case is seen red once by breaking the guard.
+`thumbs_format_test.rs`: index of generated fixtures writes only `<id>_320.webp` files, each a lossy (VP8, not VP8L)
+WebP; a first `ssimg` `/thumb/<id>/1280` answers 200 and leaves `<id>_1280.webp` on disk, a cloud-only image answers
+202 `offline` without opening the file; a data dir with lossless thumbnails and no `thumbs\FORMAT` marker gets every `ok`
+thumbnail regenerated once by the next index (old files gone, and not again by the index after); a cloud-only image
+whose read fails while it is still cloud-only ends `offline`, not `error`, and a cloud-only `error` row is picked up
+again by `download_cloud_only` (fault injected through the `FileAccess` seam).
 
 ## Risks
 

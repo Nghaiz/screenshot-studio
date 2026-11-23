@@ -363,6 +363,11 @@ fn ssimg_returns_200_202_400_404_per_contract() {
         assert_eq!(r.header("cache-control"), Some(ssimg::CACHE_CONTROL));
         assert!(is_webp(&r.body));
     }
+    // What the webview really sends: `convertFileSrc` percent-encodes the whole path (phase 1.4 integration bug).
+    let r = env.core.ssimg(&format!("/thumb%2F{}%2F320?v={}", ok.id, ok.mtime_ms));
+    assert_eq!(r.status, 200, "percent-encoded thumb path");
+    assert!(is_webp(&r.body));
+    assert_eq!(env.core.ssimg(&format!("/full%2F{}", ok.id)).status, 200, "percent-encoded full path");
     let r = env.core.ssimg(&format!("/thumb/{}/320", pending.id));
     assert_eq!((r.status, r.header(ssimg::THUMB_STATE_HEADER), r.body.len()), (202, Some("pending"), 0));
     let r = env.core.ssimg(&format!("/thumb/{}/320", offline.id));
@@ -376,6 +381,8 @@ fn ssimg_returns_200_202_400_404_per_contract() {
         "/nope/1".to_owned(),
         "/full/-3".to_owned(),
         "/".to_owned(),
+        "/thumb%2".to_owned(),
+        "/thumb%ZZ1%2F320".to_owned(),
     ] {
         assert_eq!(env.core.ssimg(&bad).status, 400, "{bad}");
     }
