@@ -1,0 +1,57 @@
+# Cook guide — one new chat session per phase
+
+Run the phases **in order**, **one per new chat session**, from the project root `D:\Screenshot_Picture`.
+Each session: paste the command, let it finish, check that the Accept line printed PASS, then close the session.
+
+## Before phase 1.1 (once)
+
+Phase 0 set new user env vars (`RUSTUP_HOME`, `CARGO_HOME`, `SCCACHE_DIR`, `HF_HOME`, PATH).
+**Quit VS Code completely (every window) and reopen it**, otherwise the new Claude session will not see Rust.
+Check in a new terminal: `cargo --version` and `node scripts/verify-rust-machine.mjs` (all PASS).
+
+## Do the non-`phase-*` files need to be mentioned?
+
+| File | What it is | Do you need to attach it? |
+|---|---|---|
+| `README.md` | Plan index: decision register D1–D11, lane ownership, deferred decisions, human steps | Yes: the line below tells the agent to read it |
+| `contracts.md` + `contract-tauri-ipc.md`, `contract-sidecar-jsonrpc.md`, `contract-sqlite-schema.md` | Shared shapes between Rust / UI / Python | Linked from the phases that need them; the line below covers phases that do not link them (1.4, 2.3, 3.3, 4.2) |
+| `design-intent.md` | Shared UI/UX, naming, paths decisions (themes, motion, layout) | Same as above; UI phases 3.3 and 4.2 do not link it, so the line below matters |
+| `cook-guide.md` | This file | No |
+
+So: **always paste the common context line** after the command. You do not need to attach anything else.
+
+### Common context line (paste after every command)
+
+```
+Context: read the plan README.md (Decision register, Contract, Deferred decisions, Human steps) and design-intent.md first; the contract*.md files are the source of truth — do not edit them unless this phase is 1.1 or an integration phase (1.4, 2.3, 3.4, 4.3). Stay inside this phase's Owns: globs. Work on branch phase-<id>, run the phase's Accept command and show its output, then merge --ff-only into main. Local git only: no remote, no push. Personal project: no Plane, no PR, no review agents.
+```
+
+## Commands
+
+Plan dir: `D:\Screenshot_Picture\plans\261123-screenshot-studio`
+
+| # | Command | Gate / note |
+|---|---|---|
+| 1 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-1.1-scaffold-contracts.md` | Runs `git init`; commits the plan too |
+| 2 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-1.2-core-index.md` | Rust core lane |
+| 3 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-1.3-ui-browse.md` | UI lane, themes |
+| 4 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-1.4-p1-integration.md` | **Human:** approve first read-only index of the OneDrive folder; decide the "download cloud-only files" button |
+| 5 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-2.1-core-organize.md` | File ops, permanent delete |
+| 6 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-2.2-ui-organize.md` | |
+| 7 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-2.3-installer.md` | **Human:** approve install to `D:\IOT_Tools\apps\ScreenshotStudio`. After this, "Screenshot Studio" is in Windows Search |
+| 8 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-3.1-sidecar.md` | AI downloads (~4–5 GB on D:) already approved on 2026-11-23: say so if asked |
+| 9 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-3.2-core-smart.md` | |
+| 10 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-3.3-ui-smart.md` | |
+| 11 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-3.4-p3-integration.md` | |
+| 12 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-4.1-core-live.md` | |
+| 13 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-4.2-ui-editor.md` | |
+| 14 | `/t1k:cook D:\Screenshot_Picture\plans\261123-screenshot-studio\phase-4.3-release.md` | **Human:** approve reinstall of the final build |
+
+Phase 3.1 only depends on 1.1, so it can run any time after 1.1 if you want AI earlier.
+Do **not** run two sessions at the same time: they share one working tree and would overwrite each other.
+
+## If a session goes wrong
+
+- Accept fails after 3 tries → stop, start a new session with `/t1k:fix <phase file> <the failing output>`.
+- A lane needs a contract change → it must stop; run the next integration phase or ask in a new session.
+- Session context gets long mid-phase → `/t1k:handoff save`, new session, `/t1k:handoff resume`.
