@@ -1,5 +1,7 @@
 //! Thumbnail pass: for every `pending` image, ONE read + decode yields blake3, dHash, pHash, the real
-//! dimensions and the two WebP thumbnails (long edge 320 and 1280, never upscaled). Runs on a rayon
+//! dimensions and the grid thumbnail (lossy WebP q80, long edge 320, never upscaled). The 1280
+//! preview is made by `ssimg` on its first request ([`render_preview`]) and kept as a cache
+//! (contract-sqlite-schema.md § thumbnails, Deferred decision #29). Runs on a rayon
 //! pool of `available_parallelism() - 1` threads; results are written in batches of
 //! [`WRITE_BATCH`] rows. Resumable: the state lives in `image.thumb_state`, so a cancelled or
 //! crashed pass continues with the rows still `pending`.
@@ -10,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 use fast_image_resize::images::Image as FirImage;
 use fast_image_resize::{PixelType, Resizer};
-use image::{ExtendedColorType, GenericImageView};
+use image::GenericImageView;
 use image_hasher::{HashAlg, HasherConfig};
 use rayon::prelude::*;
 use rusqlite::params;
@@ -18,7 +20,8 @@ use serde::Serialize;
 
 use crate::catalog::{Catalog, WRITE_BATCH};
 use crate::contract::AppError;
-use crate::contract::ipc::{CloudState, ssimg::THUMB_WIDTHS};
+use crate::contract::ipc::CloudState;
+use crate::contract::ipc::ssimg::{THUMB_GRID, THUMB_PREVIEW, THUMB_WIDTHS};
 use crate::errors::{enum_str, internal};
 use crate::fsaccess::FileAccess;
 use crate::paths;
@@ -26,6 +29,12 @@ use crate::scan::{Progress, cancelled};
 
 /// Perceptual hash side (8 x 8 = 64 bits, stored as signed i64).
 const HASH_SIDE: u32 = 8;
+/// libwebp lossy quality of every thumbnail.
+pub const WEBP_QUALITY: f32 = 80.0;
+/// File in `<data>\thumbs` naming the thumbnail format in use.
+pub const FORMAT_FILE: &str = "FORMAT";
+/// Current thumbnail format; a different or absent marker triggers one regeneration.
+pub const THUMB_FORMAT: &str = "webp-q80";
 
 /// The worker pool of background passes: `available_parallelism() - 1` threads, at least 1.
 pub fn worker_pool() -> Result<rayon::ThreadPool, AppError> {
@@ -167,7 +176,11 @@ fn process(data_dir: &Path, fa: &dyn FileAccess, item: &Item, allow_cloud: bool)
         Ok(out) => out,
         Err(e) => {
             eprintln!("ss-core thumbs: {}: {e}", item.abs.display());
-            Outcome::Error { id }
+            // A cloud-only file that could not be read (OneDrive client stopped, offline) is still
+            // cloud-only: `offline` keeps it eligible for `download_cloud_only`; `error` would not.
+            let still_cloud =
+                std::fs::symlink_metadata(&item.abs).is_ok_and(|m| fa.cloud_state(&item.abs, &m) == CloudState::CloudOnly);
+            if still_cloud { Outcome::Offline { id } } else { Outcome::Error { id } }
         }
     }
 }
@@ -184,24 +197,10 @@ fn render(data_dir: &Path, fa: &dyn FileAccess, item: &Item) -> Result<Outcome, 
     let phash =
         hash_i64(&HasherConfig::new().hash_alg(HashAlg::Mean).hash_size(HASH_SIDE, HASH_SIDE).preproc_dct().to_hasher(), &img);
 
-    let rgba = img.into_rgba8();
-    let src = FirImage::from_vec_u8(w, h, rgba.into_raw(), PixelType::U8x4).map_err(|e| e.to_string())?;
-    let mut resizer = Resizer::new();
-    for width in THUMB_WIDTHS {
-        let (dw, dh) = fit_long_edge(w, h, width as u32);
-        let pixels = if (dw, dh) == (w, h) {
-            src.buffer().to_vec()
-        } else {
-            let mut dst = FirImage::new(dw, dh, PixelType::U8x4);
-            resizer.resize(&src, &mut dst, None).map_err(|e| e.to_string())?;
-            dst.into_vec()
-        };
-        let mut webp = Vec::new();
-        image::codecs::webp::WebPEncoder::new_lossless(&mut webp)
-            .encode(&pixels, dw, dh, ExtendedColorType::Rgba8)
-            .map_err(|e| e.to_string())?;
-        write_atomic(&paths::thumb_path(data_dir, item.id, width), &webp).map_err(|e| e.to_string())?;
-    }
+    let webp = encode_thumb(img.into_rgb8(), THUMB_GRID as u32)?;
+    write_atomic(&paths::thumb_path(data_dir, item.id, THUMB_GRID), &webp).map_err(|e| e.to_string())?;
+    // A new grid thumbnail means the file changed: a cached preview is stale.
+    let _ = std::fs::remove_file(paths::thumb_path(data_dir, item.id, THUMB_PREVIEW));
 
     // Reading a cloud-only file (explicit download) hydrates it: record the state it has now.
     let cloud = std::fs::symlink_metadata(&item.abs).map(|m| fa.cloud_state(&item.abs, &m)).unwrap_or(CloudState::Unknown);
@@ -223,11 +222,96 @@ pub fn fit_long_edge(w: u32, h: u32, target: u32) -> (u32, u32) {
     (scale(w), scale(h))
 }
 
+/// Lossy WebP q80 of `rgb`, long edge `target` (never upscaled).
+fn encode_thumb(rgb: image::RgbImage, target: u32) -> Result<Vec<u8>, String> {
+    let (w, h) = rgb.dimensions();
+    let (dw, dh) = fit_long_edge(w, h, target);
+    let pixels = if (dw, dh) == (w, h) {
+        rgb.into_raw()
+    } else {
+        let src = FirImage::from_vec_u8(w, h, rgb.into_raw(), PixelType::U8x3).map_err(|e| e.to_string())?;
+        let mut dst = FirImage::new(dw, dh, PixelType::U8x3);
+        Resizer::new().resize(&src, &mut dst, None).map_err(|e| e.to_string())?;
+        dst.into_vec()
+    };
+    let mem = webp::Encoder::from_rgb(&pixels, dw, dh)
+        .encode_simple(false, WEBP_QUALITY)
+        .map_err(|e| format!("webp encode: {e:?}"))?;
+    Ok(mem.to_vec())
+}
+
+/// The 1280 preview of one image, written to its cache path and returned (`ssimg`, first request).
+/// The caller decides whether the original may be opened (never for a cloud-only file).
+pub fn render_preview(data_dir: &Path, fa: &dyn FileAccess, id: i64, abs: &Path) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    fa.open(abs).and_then(|mut f| f.read_to_end(&mut bytes)).map_err(|e| e.to_string())?;
+    let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+    drop(bytes);
+    let webp = encode_thumb(img.into_rgb8(), THUMB_PREVIEW as u32)?;
+    write_atomic(&paths::thumb_path(data_dir, id, THUMB_PREVIEW), &webp).map_err(|e| e.to_string())?;
+    Ok(webp)
+}
+
+/// Deletes both cached thumbnails of an image (best effort: they are a cache).
+pub fn remove_thumbs(data_dir: &Path, id: i64) {
+    for w in THUMB_WIDTHS {
+        let p = paths::thumb_path(data_dir, id, w);
+        if let Err(e) = std::fs::remove_file(&p) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("ss-core: could not remove thumbnail {}: {e}", p.display());
+            }
+        }
+    }
+}
+
+/// Copies the cached thumbnails of `src` to `dst` (a copied file). True when the 320 one was copied.
+pub fn copy_thumbs(data_dir: &Path, src: i64, dst: i64) -> bool {
+    let mut grid = false;
+    for w in THUMB_WIDTHS {
+        let (from, to) = (paths::thumb_path(data_dir, src, w), paths::thumb_path(data_dir, dst, w));
+        let _ = std::fs::remove_file(&to);
+        if !from.is_file() {
+            continue;
+        }
+        let ok = to.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::copy(&from, &to)).is_ok();
+        grid |= ok && w == THUMB_GRID;
+    }
+    grid
+}
+
+/// Format migration (Deferred decision #29): when `<data>\thumbs\FORMAT` is absent or names another
+/// format, deletes every thumbnail file, marks every `ok` thumbnail `pending`, then writes the
+/// marker, so the next thumbnail pass regenerates them once. Returns whether it migrated.
+pub fn ensure_format(cat: &Catalog) -> Result<bool, AppError> {
+    let dir = cat.data_dir().join(paths::THUMBS_DIR);
+    let marker = dir.join(FORMAT_FILE);
+    if std::fs::read_to_string(&marker).is_ok_and(|s| s.trim() == THUMB_FORMAT) {
+        return Ok(false);
+    }
+    if dir.is_dir() {
+        for entry in walkdir::WalkDir::new(&dir).into_iter().filter_map(Result::ok) {
+            if entry.file_type().is_file() && entry.file_name() != FORMAT_FILE {
+                if let Err(e) = std::fs::remove_file(entry.path()) {
+                    eprintln!("ss-core: could not remove old thumbnail {}: {e}", entry.path().display());
+                }
+            }
+        }
+    }
+    cat.write(|tx| {
+        tx.execute("UPDATE image SET thumb_state = 'pending' WHERE thumb_state = 'ok'", [])?;
+        Ok(())
+    })?;
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(&marker, THUMB_FORMAT)?;
+    Ok(true)
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    static TMP_SEQ: AtomicI64 = AtomicI64::new(0);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("webp.tmp");
+    let tmp = path.with_extension(format!("{}-{}.tmp", std::process::id(), TMP_SEQ.fetch_add(1, Ordering::Relaxed)));
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)
 }

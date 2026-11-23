@@ -31,6 +31,11 @@ Subcommands (phase 1.2):
   get <key>                              one setting value (JSON)
   set <key> <json>                       store a setting; prints null
 
+Subcommands (phase 2.1, read-only):
+  search <text> [--mode any|filename|ocr|semantic] [--limit N] [--cursor C]
+                                         full-text search, most relevant first; prints ImagePage
+  journal [--limit N]                    undo journal batches, newest first; prints the list_journal result
+
 Global flags:
   --data-dir <path>   data dir (else SS_DATA_DIR, else D:\\IOT_Tools\\data\\ScreenshotStudio)
   --json              compact one-line JSON on stdout
@@ -137,6 +142,28 @@ fn run(args: &mut Vec<String>) -> Result<Value, Failure> {
             q.cursor = cursor;
             q.include_missing = include_missing;
             json(open()?.query_images(&q)?)
+        }
+        "search" => {
+            let mode = take_value(args, "--mode")?.unwrap_or_else(|| "any".into());
+            let text_mode: TextMode = serde_json::from_value(Value::String(mode.clone()))
+                .map_err(|_| usage(format!("--mode must be any|filename|ocr|semantic, got `{mode}`")))?;
+            let limit = take_value(args, "--limit")?.map(|v| parse_int(&v, "--limit")).transpose()?.unwrap_or(100);
+            let cursor = take_value(args, "--cursor")?;
+            if args.is_empty() {
+                return Err(usage("search needs <text>"));
+            }
+            let text = std::mem::take(args).join(" ");
+            let mut q = query::default_query(limit);
+            q.text = Some(text);
+            q.text_mode = text_mode;
+            q.sort = SortSpec { field: SortField::Relevance, dir: SortDir::Desc };
+            q.cursor = cursor;
+            json(open()?.query_images(&q)?)
+        }
+        "journal" => {
+            let limit = take_value(args, "--limit")?.map(|v| parse_int(&v, "--limit")).transpose()?.unwrap_or(50);
+            no_more(args)?;
+            json(open()?.list_journal(LimitReq { limit })?)
         }
         "stats" => {
             no_more(args)?;

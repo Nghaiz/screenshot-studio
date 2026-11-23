@@ -3,6 +3,34 @@
 Non-obvious gotchas found while building Screenshot Studio. Owner rule: lessons stay in this repo, nothing goes
 to a kit. Newest first. One entry: what happened, why, what to do.
 
+## 2026-11-23 — phase 2.1
+
+### FTS5 `remove_diacritics` does not fold `đ` / `Đ`
+- **Seen:** a note "hóa đơn" was not found by the search `hoa don`, while `anh chup` finds `Ảnh chụp.png`.
+- **Why:** `unicode61 remove_diacritics 2` strips combining marks after Unicode decomposition. `ả`, `ụ`, `ơ`
+  decompose; `đ` (U+0111) is its own letter with no decomposition, so it stays `đ`.
+- **Do:** users must type `đ` for words that contain it. Folding it needs a custom tokenizer or a second
+  normalized column (a schema change, so an Owner decision); nothing does that yet.
+
+### The `trash` crate panics on a thread that already holds COM in another mode
+- **Seen in the source (trash 5.4.0, `windows.rs`):** every call runs `CoInitializeEx` (apartment-threaded) on
+  the calling thread and `panic!`s if it fails, which it does on a thread already initialized as MTA.
+- **Do:** `ss-core::ops::fsio` runs every Recycle Bin call on a fresh `std::thread`; never call `trash::*`
+  directly from a Tauri/tokio pooled thread.
+
+### A guard test can pass for the wrong reason: break the guard and watch it go red
+- **Seen:** with every delete guard removed one at a time (scratch mutation script), "an unknown token is
+  accepted" stayed GREEN: the test tried bogus tokens while no real ticket existed, so there was nothing to
+  wrongly redeem.
+- **Do:** a test that proves "X is refused" needs a live X it could wrongly reach. The test now holds a live
+  ticket while trying bogus tokens; all 7 delete-guard mutations go red.
+
+### `found invalid metadata files for crate ss_core` after many quick rebuilds
+- **Seen:** after ~10 back-to-back `cargo test` rebuilds of ss-core, every test crate failed with E0786 and
+  `found staticlib serde_with_macros instead of rlib`; `cargo clean -p ss-core` did not fix it.
+- **Why (likely):** sccache served a bad artifact; the source compiled fine moments before.
+- **Do:** rebuild with `RUSTC_WRAPPER=""` (bypasses sccache), as for the release app build above.
+
 ## 2026-11-23 — phase 1.4
 
 ### Debug `ssctl` is far too slow for a real-library index

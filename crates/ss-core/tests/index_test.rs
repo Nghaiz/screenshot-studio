@@ -116,15 +116,16 @@ fn index_500_fixtures_counts_thumbs_idempotent_reindex_and_missing() {
                 assert_eq!(s.taken_ms, d.created_ms.unwrap_or(s.mtime_ms), "{} falls back to created", f.file_name);
             }
         }
-        for w in ssimg::THUMB_WIDTHS {
-            let p = paths::thumb_path(env.core.data_dir(), s.id, w);
-            let bytes = std::fs::read(&p).unwrap_or_else(|e| panic!("thumb {}: {e}", p.display()));
-            assert!(is_webp(&bytes), "{} is WebP", p.display());
-            let (tw, th) = image::image_dimensions(&p).unwrap();
-            let long = (f.width.max(f.height)).min(w as u32);
-            assert_eq!(tw.max(th), long, "{} long edge", p.display());
-            thumb_mtimes.push((p, mtime(&paths::thumb_path(env.core.data_dir(), s.id, w))));
-        }
+        // From phase 2.1 the index writes the 320 file only; the 1280 one is made on first request.
+        let w = ssimg::THUMB_GRID;
+        let p = paths::thumb_path(env.core.data_dir(), s.id, w);
+        let bytes = std::fs::read(&p).unwrap_or_else(|e| panic!("thumb {}: {e}", p.display()));
+        assert!(is_webp(&bytes), "{} is WebP", p.display());
+        let (tw, th) = image::image_dimensions(&p).unwrap();
+        let long = (f.width.max(f.height)).min(w as u32);
+        assert_eq!(tw.max(th), long, "{} long edge", p.display());
+        assert!(!paths::thumb_path(env.core.data_dir(), s.id, ssimg::THUMB_PREVIEW).exists());
+        thumb_mtimes.push((p.clone(), mtime(&p)));
     }
 
     // Re-index: no new rows, no updates, no thumbnail regenerated.
@@ -208,8 +209,9 @@ fn query_images_cursor_paging_returns_every_id_exactly_once() {
     q.cursor = Some("zz".into());
     assert_eq!(env.core.query_images(&q).unwrap_err().kind, ErrorKind::InvalidArgument, "garbage cursor");
     let mut q = query::default_query(5);
-    q.favorite_only = true;
-    assert_eq!(env.core.query_images(&q).unwrap_err().kind, ErrorKind::InvalidArgument, "2.1 filter rejected");
+    q.text = Some("cat".into());
+    q.text_mode = TextMode::Semantic;
+    assert_eq!(env.core.query_images(&q).unwrap_err().kind, ErrorKind::SidecarUnavailable, "semantic lands in 3.2");
 
     // Trash filter and date range.
     let victim = *all.iter().next().unwrap();
