@@ -26,9 +26,9 @@ pub async fn get_timeline(req: GetTimelineReq, state: State<'_, AppState>) -> Re
 }
 
 #[tauri::command]
-pub async fn list_journal(req: LimitReq) -> Result<JournalPage, AppError> {
-    let _ = req;
-    not_implemented("list_journal", "2.1")
+pub async fn list_journal(req: LimitReq, state: State<'_, AppState>) -> Result<JournalPage, AppError> {
+    let core = state.core.clone();
+    blocking(move || core.list_journal(req)).await
 }
 
 #[tauri::command]

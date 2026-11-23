@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use ss_core::AppCore;
-use ss_core::contract::ipc::{JobProgress, LibraryChanged, events};
+use ss_core::contract::ipc::{JobProgress, LibraryChangeReason, LibraryChanged, OpResult, events};
 use ss_core::contract::{AppError, ErrorKind};
 use ss_core::jobs::EventSink;
 use ss_core::ssimg::SsimgResponse;
@@ -29,6 +29,13 @@ impl EventSink for TauriSink {
         if let Err(e) = self.app.emit(events::LIBRARY_CHANGED, c) {
             eprintln!("screenshot-studio: emit {}: {e}", events::LIBRARY_CHANGED);
         }
+    }
+}
+
+/// Emits `library-changed` after a mutation that changed something (`imageIds: null` = refetch all).
+pub fn emit_changed(app: &AppHandle, reason: LibraryChangeReason, r: &OpResult, image_ids: Option<Vec<i64>>) {
+    if r.affected > 0 {
+        TauriSink { app: app.clone() }.library_changed(&LibraryChanged { reason, image_ids });
     }
 }
 

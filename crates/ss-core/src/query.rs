@@ -1,15 +1,15 @@
 //! Read queries behind `query_images`, `get_image`, `get_timeline` and `get_counts`.
 //!
-//! Phase 1.2 supports sort, limit, cursor, trash, includeMissing and the date range of
-//! `ImageQuery`; every other filter lands in phase 2.1 (semantic text in 3.2) and is REJECTED with
-//! `invalidArgument` when set, never silently ignored. Paging is keyset-based: the opaque cursor
-//! carries the last row's sort key and id, so every id is returned exactly once.
+//! Every `ImageQuery` filter is built by [`crate::filter::build`] (phase 2.1; `semantic` text is
+//! refused until 3.2). Paging is keyset-based: the opaque cursor carries the last row's sort key and
+//! id, so every id is returned exactly once.
 
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::{Deserialize, Serialize};
 
 use crate::catalog;
+use crate::filter::{self, FilterSql};
 use crate::contract::AppError;
 use crate::contract::ipc::*;
 use crate::errors::{enum_str, invalid, not_found, now_ms, parse_enum};
@@ -21,7 +21,7 @@ const SUMMARY_COLUMNS: &str = "i.id, i.root_id, i.folder, i.file_name, i.size_by
     i.aspect, i.cloud_state, i.thumb_state, i.favorite, i.rating,
     CASE WHEN o.image_id IS NULL THEN NULL ELSE length(trim(o.text)) > 0 END,
     i.dominant_rgb, i.trashed_at, i.missing, i.mtime_ms";
-const FROM: &str = "FROM image i LEFT JOIN ocr_result o ON o.image_id = i.id";
+const FROM: &str = filter::FROM_IMAGES;
 
 /// A summary row before its enum columns are parsed (parsing errors are `AppError`s, which a
 /// rusqlite row closure cannot return).
@@ -77,56 +77,6 @@ pub fn summary(conn: &Connection, id: i64) -> Result<Option<ImageSummary>, AppEr
 }
 
 // ---------------------------------------------------------------------------------------------
-// Filters
-// ---------------------------------------------------------------------------------------------
-
-/// Rejects every filter that phase 1.2 does not implement (errors over silent fallbacks).
-fn check_supported(q: &ImageQuery) -> Result<(), AppError> {
-    let unsupported: [(&str, bool); 13] = [
-        ("text", q.text.as_deref().is_some_and(|t| !t.trim().is_empty())),
-        ("minWidth", q.min_width.is_some()),
-        ("maxWidth", q.max_width.is_some()),
-        ("minHeight", q.min_height.is_some()),
-        ("maxHeight", q.max_height.is_some()),
-        ("aspects", !q.aspects.is_empty()),
-        ("minSize/maxSize", q.min_size.is_some() || q.max_size.is_some()),
-        ("folders", !q.folders.is_empty()),
-        ("tagIds", !q.tag_ids.is_empty()),
-        ("albumId", q.album_id.is_some()),
-        ("color/categories", q.color.is_some() || !q.categories.is_empty()),
-        ("favoriteOnly/minRating", q.favorite_only || q.min_rating > 0),
-        ("hasText", q.has_text.is_some()),
-    ];
-    match unsupported.iter().find(|(_, set)| *set) {
-        Some((name, _)) => Err(invalid(format!("filter `{name}` is not supported yet")).with_detail("lands in phase 2.1")),
-        None => Ok(()),
-    }
-}
-
-/// `WHERE` clause (without the cursor) and its parameters.
-fn where_clause(q: &ImageQuery) -> (String, Vec<Value>) {
-    let mut parts = vec!["1 = 1".to_owned()];
-    let mut params = Vec::new();
-    match q.trash {
-        TrashFilter::Exclude => parts.push("i.trashed_at IS NULL".into()),
-        TrashFilter::Only => parts.push("i.trashed_at IS NOT NULL".into()),
-        TrashFilter::Include => {}
-    }
-    if !q.include_missing {
-        parts.push("i.missing = 0".into());
-    }
-    if let Some(from) = q.date_from {
-        parts.push("i.taken_ms >= ?".into());
-        params.push(Value::Integer(from));
-    }
-    if let Some(to) = q.date_to {
-        parts.push("i.taken_ms <= ?".into());
-        params.push(Value::Integer(to));
-    }
-    (parts.join(" AND "), params)
-}
-
-// ---------------------------------------------------------------------------------------------
 // query_images
 // ---------------------------------------------------------------------------------------------
 
@@ -158,7 +108,7 @@ fn decode_cursor(s: &str) -> Result<Cursor, AppError> {
 }
 
 /// SQL expression of the sort key. Every key is non-NULL so keyset comparisons are total.
-fn sort_expr(field: SortField, seed: i64) -> Result<String, AppError> {
+fn sort_expr(field: SortField, seed: i64, relevance: Option<&str>) -> Result<String, AppError> {
     Ok(match field {
         SortField::Taken => "i.taken_ms".into(),
         SortField::Name => "lower(i.file_name)".into(),
@@ -166,9 +116,10 @@ fn sort_expr(field: SortField, seed: i64) -> Result<String, AppError> {
         SortField::Width => "COALESCE(i.width, -1)".into(),
         SortField::Rating => "i.rating".into(),
         SortField::Random => format!("((i.id * 2654435761 + {seed}) % 4294967291)"),
-        SortField::Relevance => {
-            return Err(invalid("sort `relevance` needs a text query").with_detail("text search lands in phase 2.1"));
-        }
+        SortField::Relevance => match relevance {
+            Some(r) => r.to_owned(),
+            None => return Err(invalid("sort `relevance` needs a text query")),
+        },
     })
 }
 
@@ -194,7 +145,7 @@ pub fn query_images(conn: &Connection, q: &ImageQuery) -> Result<ImagePage, AppE
     if !(1..=LIMIT_MAX).contains(&q.limit) {
         return Err(invalid(format!("limit must be 1..{LIMIT_MAX}, got {}", q.limit)));
     }
-    check_supported(q)?;
+    let FilterSql { from, filter, params: filter_params, relevance } = filter::build(q)?;
     let cursor = q.cursor.as_deref().map(decode_cursor).transpose()?;
     if let Some(c) = &cursor {
         if c.f != q.sort.field || c.d != q.sort.dir {
@@ -202,10 +153,9 @@ pub fn query_images(conn: &Connection, q: &ImageQuery) -> Result<ImagePage, AppE
         }
     }
     let seed = cursor.as_ref().and_then(|c| c.s).unwrap_or_else(|| now_ms().rem_euclid(1_000_003));
-    let expr = sort_expr(q.sort.field, seed)?;
-    let (filter, filter_params) = where_clause(q);
+    let expr = sort_expr(q.sort.field, seed, relevance.as_deref())?;
 
-    let total: i64 = conn.query_row(&format!("SELECT count(*) {FROM} WHERE {filter}"), params_from_iter(&filter_params), |r| {
+    let total: i64 = conn.query_row(&format!("SELECT count(*) {from} WHERE {filter}"), params_from_iter(&filter_params), |r| {
         r.get(0)
     })?;
 
@@ -214,7 +164,7 @@ pub fn query_images(conn: &Connection, q: &ImageQuery) -> Result<ImagePage, AppE
         SortDir::Desc => ("<", "DESC"),
     };
     let mut page_params = filter_params.clone();
-    let mut sql = format!("SELECT {SUMMARY_COLUMNS}, {expr} AS sort_key {FROM} WHERE {filter}");
+    let mut sql = format!("SELECT {SUMMARY_COLUMNS}, {expr} AS sort_key {from} WHERE {filter}");
     if let Some(c) = &cursor {
         sql.push_str(&format!(" AND ({expr}, i.id) {cmp} (?, ?)"));
         page_params.push(json_to_sql(&c.k)?);
@@ -293,16 +243,15 @@ pub fn get_image(conn: &Connection, id: i64) -> Result<ImageDetail, AppError> {
 
 /// Buckets by local calendar day or month of `taken_ms`; `startMs` is the bucket's local midnight.
 pub fn get_timeline(conn: &Connection, req: &GetTimelineReq) -> Result<TimelineResult, AppError> {
-    check_supported(&req.query)?;
     let fmt = match req.bucket {
         TimelineBucketSize::Day => "%Y-%m-%d",
         TimelineBucketSize::Month => "%Y-%m-01",
     };
-    let (filter, params) = where_clause(&req.query);
+    let FilterSql { from, filter, params, .. } = filter::build(&req.query)?;
     let sql = format!(
         "SELECT CAST(strftime('%s', k, 'utc') AS INTEGER) * 1000, n FROM (
            SELECT strftime('{fmt}', i.taken_ms / 1000, 'unixepoch', 'localtime') AS k, count(*) AS n
-           {FROM} WHERE {filter} GROUP BY k) ORDER BY k"
+           {from} WHERE {filter} GROUP BY k) ORDER BY k"
     );
     let mut stmt = conn.prepare(&sql)?;
     let buckets = stmt

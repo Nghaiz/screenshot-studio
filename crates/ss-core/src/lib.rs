@@ -5,6 +5,7 @@ pub mod app;
 pub mod catalog;
 pub mod contract;
 mod errors;
+pub mod filter;
 pub mod fsaccess;
 pub mod jobs;
 pub mod ops;

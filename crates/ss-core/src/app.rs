@@ -15,6 +15,8 @@ use crate::jobs::{EventSink, JobRegistry, ProgressReporter};
 use crate::scan::{self, ScanReport};
 use crate::ssimg::{self, SsimgResponse};
 use crate::thumbs::{self, ThumbReport, ThumbScope};
+use crate::ops::purge::DeleteTokens;
+use crate::ops::{files, journal, organize, purge};
 use crate::{ops, paths, query};
 
 /// What an index run does after the scan.
@@ -41,11 +43,17 @@ pub struct AppCore {
     catalog: Catalog,
     fa: Arc<dyn FileAccess>,
     jobs: JobRegistry,
+    delete_tokens: DeleteTokens,
 }
 
 impl AppCore {
     pub fn open(data_dir: &Path, fa: Arc<dyn FileAccess>) -> Result<Arc<Self>, AppError> {
-        Ok(Arc::new(Self { catalog: Catalog::open(data_dir)?, fa, jobs: JobRegistry::default() }))
+        Ok(Arc::new(Self {
+            catalog: Catalog::open(data_dir)?,
+            fa,
+            jobs: JobRegistry::default(),
+            delete_tokens: DeleteTokens::default(),
+        }))
     }
 
     /// The real data dir ([`paths::data_dir`]) and the real file system.
@@ -116,6 +124,100 @@ impl AppCore {
         ssimg::handle(&self.catalog, self.fa.as_ref(), path)
     }
 
+    // -----------------------------------------------------------------------------------------
+    // Phase 2.1: organize, file ops, permanent delete, journal
+    // -----------------------------------------------------------------------------------------
+
+    pub fn list_tags(&self) -> Result<Vec<Tag>, AppError> {
+        self.catalog.read(organize::list_tags)
+    }
+    pub fn create_tag(&self, caller: Caller, req: CreateTagReq) -> Result<Tag, AppError> {
+        organize::create_tag(caller, &self.catalog, req)
+    }
+    pub fn update_tag(&self, caller: Caller, req: UpdateTagReq) -> Result<Tag, AppError> {
+        organize::update_tag(caller, &self.catalog, req)
+    }
+    pub fn delete_tag(&self, caller: Caller, req: DeleteTagReq) -> Result<OpResult, AppError> {
+        organize::delete_tag(caller, &self.catalog, req)
+    }
+    pub fn set_tags(&self, caller: Caller, req: SetTagsReq) -> Result<OpResult, AppError> {
+        organize::set_tags(caller, &self.catalog, req)
+    }
+    pub fn list_albums(&self) -> Result<Vec<Album>, AppError> {
+        self.catalog.read(organize::list_albums)
+    }
+    pub fn create_album(&self, caller: Caller, req: CreateAlbumReq) -> Result<Album, AppError> {
+        organize::create_album(caller, &self.catalog, req)
+    }
+    pub fn rename_album(&self, caller: Caller, req: RenameAlbumReq) -> Result<Album, AppError> {
+        organize::rename_album(caller, &self.catalog, req)
+    }
+    pub fn delete_album(&self, caller: Caller, req: DeleteAlbumReq) -> Result<OpResult, AppError> {
+        organize::delete_album(caller, &self.catalog, req)
+    }
+    pub fn album_add(&self, caller: Caller, req: AlbumImagesReq) -> Result<OpResult, AppError> {
+        organize::album_add(caller, &self.catalog, req)
+    }
+    pub fn album_remove(&self, caller: Caller, req: AlbumImagesReq) -> Result<OpResult, AppError> {
+        organize::album_remove(caller, &self.catalog, req)
+    }
+    pub fn album_reorder(&self, caller: Caller, req: AlbumImagesReq) -> Result<OpResult, AppError> {
+        organize::album_reorder(caller, &self.catalog, req)
+    }
+    pub fn set_favorite(&self, caller: Caller, req: SetFavoriteReq) -> Result<OpResult, AppError> {
+        organize::set_favorite(caller, &self.catalog, req)
+    }
+    pub fn set_rating(&self, caller: Caller, req: SetRatingReq) -> Result<OpResult, AppError> {
+        organize::set_rating(caller, &self.catalog, req)
+    }
+    pub fn set_note(&self, caller: Caller, req: SetNoteReq) -> Result<OpResult, AppError> {
+        organize::set_note(caller, &self.catalog, req)
+    }
+    pub fn list_smart_filters(&self) -> Result<Vec<SmartFilter>, AppError> {
+        self.catalog.read(organize::list_smart_filters)
+    }
+    pub fn save_smart_filter(&self, caller: Caller, req: SaveSmartFilterReq) -> Result<SmartFilter, AppError> {
+        organize::save_smart_filter(caller, &self.catalog, req)
+    }
+    pub fn delete_smart_filter(&self, caller: Caller, req: DeleteSmartFilterReq) -> Result<OpResult, AppError> {
+        organize::delete_smart_filter(caller, &self.catalog, req)
+    }
+    pub fn move_images(&self, caller: Caller, req: MoveImagesReq) -> Result<OpResult, AppError> {
+        files::move_images(caller, &self.catalog, req)
+    }
+    pub fn preview_rename(&self, req: PreviewRenameReq) -> Result<RenamePreview, AppError> {
+        files::preview_rename(&self.catalog, req)
+    }
+    pub fn rename_images(&self, caller: Caller, req: RenameImagesReq) -> Result<OpResult, AppError> {
+        files::rename_images(caller, &self.catalog, req)
+    }
+    pub fn trash_images(&self, caller: Caller, req: ImageIdsReq) -> Result<OpResult, AppError> {
+        files::trash_images(caller, &self.catalog, req)
+    }
+    pub fn restore_images(&self, caller: Caller, req: ImageIdsReq) -> Result<OpResult, AppError> {
+        files::restore_images(caller, &self.catalog, req)
+    }
+    pub fn recycle_images(&self, caller: Caller, req: ImageIdsReq) -> Result<OpResult, AppError> {
+        files::recycle_images(caller, &self.catalog, req)
+    }
+    pub fn request_permanent_delete(&self, caller: Caller, req: ImageIdsReq) -> Result<PermanentDeleteTicket, AppError> {
+        purge::request_permanent_delete(caller, &self.catalog, &self.delete_tokens, req)
+    }
+    pub fn delete_permanently(&self, caller: Caller, req: DeletePermanentlyReq) -> Result<OpResult, AppError> {
+        purge::delete_permanently(caller, &self.catalog, &self.delete_tokens, req)
+    }
+    /// Tests only (see [`DeleteTokens::set_ttl_ms`]).
+    #[doc(hidden)]
+    pub fn delete_tokens(&self) -> &DeleteTokens {
+        &self.delete_tokens
+    }
+    pub fn undo(&self, caller: Caller, req: UndoReq) -> Result<OpResult, AppError> {
+        journal::undo(caller, &self.catalog, req)
+    }
+    pub fn list_journal(&self, req: LimitReq) -> Result<JournalPage, AppError> {
+        journal::list_journal(&self.catalog, req)
+    }
+
     pub fn cancel_job(&self, req: CancelJobReq) -> Result<(), AppError> {
         self.jobs.cancel(req.job_id)
     }
@@ -180,6 +282,9 @@ impl AppCore {
         };
         let auto_cloud = self.auto_download_cloud_only()?;
         let mut report = IndexReport::default();
+        if thumbs::ensure_format(&self.catalog)? {
+            eprintln!("ss-core: thumbnails switched to {}: each is regenerated once", thumbs::THUMB_FORMAT);
+        }
         for root in &roots {
             let progress = |done: i64, total: i64, path: Option<&str>| reporter.report("scan", done, total, path);
             let s = scan::scan_root(&self.catalog, self.fa.as_ref(), root, auto_cloud, cancel, &progress)?;
@@ -250,10 +355,12 @@ impl AppCore {
         let reporter = ProgressReporter::new(sink, job_id, JobKind::CloudDownload);
         let result = (|| {
             self.catalog.read(|conn| catalog::get_root(conn, root_id))?;
+            thumbs::ensure_format(&self.catalog)?;
+            // `error` too: a cloud-only file whose read failed before phase 2.1 was written `error`.
             self.catalog.write(move |tx| {
                 tx.execute(
                     "UPDATE image SET thumb_state = 'pending'
-                     WHERE root_id = ?1 AND missing = 0 AND cloud_state = 'cloudOnly' AND thumb_state = 'offline'",
+                     WHERE root_id = ?1 AND missing = 0 AND cloud_state = 'cloudOnly' AND thumb_state IN ('offline', 'error')",
                     [root_id],
                 )?;
                 Ok(())

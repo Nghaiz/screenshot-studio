@@ -3,20 +3,31 @@
 //!
 //! - `thumb/<id>/<w>`: `w` must be 320 or 1280 (else 400); unknown id 404; thumbnail `pending` or
 //!   `offline` -> 202, empty body, header `x-thumb-state`; `error` (undecodable file) -> 404.
+//!   From phase 2.1 the index makes only the 320 file: a `1280` request for an `ok` image whose 1280
+//!   file is absent renders it synchronously from the original (lossy WebP q80), keeps it and answers
+//!   200; a cloud-only original is never opened for it (202 `offline`, contract rule 9).
 //! - `full/<id>`: the original bytes. An explicit user action, so a cloud-only file may be opened
 //!   (OneDrive downloads it on demand, as Explorer does); a missing file -> 404.
 //! - Anything else -> 400. A 200 carries `Cache-Control: max-age=31536000, immutable` (the UI adds
 //!   `?v=<mtimeMs>`, which is ignored here).
 //! - The path is percent-decoded first: `convertFileSrc` sends `thumb/12/320` as `/thumb%2F12%2F320`.
+//!
+//! Cache header review (Deferred decision #31, phase 2.1): `immutable` + one year is kept. The URL
+//! carries `?v=<mtimeMs>`, so a changed file gets a new URL and the header never serves stale pixels;
+//! what WebView2 holds per thumbnail is its encoded response plus the decoded bitmap, and the encoded
+//! part drops ~30x with lossy q80 (MEASURED in 1.4 on 60 real screenshots: ~240 KB lossless 320+1280
+//! vs 7.3 KB lossy 320). The decoded bitmaps of off-screen tiles are the UI's side (phase 2.2), and the
+//! 500 MB budget is measured by `p2.mjs` in 2.3. A header change would be a contract change (Owner).
 
 use std::io::Read;
 
 use rusqlite::OptionalExtension;
 
 use crate::catalog::Catalog;
-use crate::contract::ipc::ssimg::{CACHE_CONTROL, THUMB_STATE_HEADER, THUMB_WIDTHS};
+use crate::contract::ipc::CloudState;
+use crate::contract::ipc::ssimg::{CACHE_CONTROL, THUMB_PREVIEW, THUMB_STATE_HEADER, THUMB_WIDTHS};
 use crate::fsaccess::FileAccess;
-use crate::paths;
+use crate::{paths, thumbs};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SsimgResponse {
@@ -88,29 +99,59 @@ fn parse(path: &str) -> Option<Route> {
 pub fn handle(cat: &Catalog, fa: &dyn FileAccess, path: &str) -> SsimgResponse {
     match parse(path) {
         None => SsimgResponse::empty(400),
-        Some(Route::Thumb { id, width }) => thumb(cat, id, width),
+        Some(Route::Thumb { id, width }) => thumb(cat, fa, id, width),
         Some(Route::Full { id }) => full(cat, fa, id),
     }
 }
 
-fn thumb(cat: &Catalog, id: i64, width: i64) -> SsimgResponse {
-    let state = cat.read(|conn| {
-        Ok(conn.query_row("SELECT thumb_state FROM image WHERE id = ?1", [id], |r| r.get::<_, String>(0)).optional()?)
+fn thumb(cat: &Catalog, fa: &dyn FileAccess, id: i64, width: i64) -> SsimgResponse {
+    let row = cat.read(|conn| {
+        Ok(conn
+            .query_row(
+                "SELECT i.thumb_state, r.path, i.folder, i.file_name FROM image i JOIN library_root r ON r.id = i.root_id
+                 WHERE i.id = ?1",
+                [id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)),
+            )
+            .optional()?)
     });
-    match state.as_ref().map(|s| s.as_deref()) {
+    let (state, root, folder, name) = match row {
         Err(e) => {
             eprintln!("ssimg: thumb {id}: {e}");
+            return SsimgResponse::empty(500);
+        }
+        Ok(None) => return SsimgResponse::empty(404),
+        Ok(Some(r)) => r,
+    };
+    match state.as_str() {
+        "pending" | "offline" => return accepted(&state),
+        "ok" => {}
+        _ => return SsimgResponse::empty(404),
+    }
+    if let Ok(bytes) = std::fs::read(paths::thumb_path(cat.data_dir(), id, width)) {
+        return SsimgResponse::ok("image/webp", bytes);
+    }
+    if width != THUMB_PREVIEW {
+        return SsimgResponse::empty(404);
+    }
+    let abs = paths::image_abs_path(&root, &folder, &name);
+    let Ok(meta) = std::fs::symlink_metadata(&abs) else {
+        return SsimgResponse::empty(404);
+    };
+    if fa.cloud_state(&abs, &meta) == CloudState::CloudOnly {
+        return accepted("offline");
+    }
+    match thumbs::render_preview(cat.data_dir(), fa, id, &abs) {
+        Ok(bytes) => SsimgResponse::ok("image/webp", bytes),
+        Err(e) => {
+            eprintln!("ssimg: preview {id}: {e}");
             SsimgResponse::empty(500)
         }
-        Ok(None) | Ok(Some("error")) => SsimgResponse::empty(404),
-        Ok(Some(s @ ("pending" | "offline"))) => {
-            SsimgResponse { status: 202, headers: vec![(THUMB_STATE_HEADER, s.to_owned())], body: Vec::new() }
-        }
-        Ok(Some(_)) => match std::fs::read(paths::thumb_path(cat.data_dir(), id, width)) {
-            Ok(bytes) => SsimgResponse::ok("image/webp", bytes),
-            Err(_) => SsimgResponse::empty(404),
-        },
     }
+}
+
+fn accepted(state: &str) -> SsimgResponse {
+    SsimgResponse { status: 202, headers: vec![(THUMB_STATE_HEADER, state.to_owned())], body: Vec::new() }
 }
 
 fn full(cat: &Catalog, fa: &dyn FileAccess, id: i64) -> SsimgResponse {
