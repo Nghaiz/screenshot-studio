@@ -5,7 +5,7 @@ Hardness: phases=15 new=7 modules=0 lanes=3
 Flags: --auto
 PRs: 0
 
-Personal project. Remote: private GitHub repo `Nghaiz/screenshot-studio` (SSH), added 2026-11-23 at the owner's request after phase 1.1; `main` is pushed after every phase merge and GitHub Actions CI (`.github/workflows/ci.yml`) runs on each push. Still no PR, no Plane, no other cloud.
+Personal project. Remote: **public** GitHub repo `Nghaiz/screenshot-studio` (SSH), added 2026-11-23 at the owner's request after phase 1.1; every phase lands through its own PR into `main` (squash-merge after GitHub Actions CI `.github/workflows/ci.yml` is green). No Plane, no other cloud. Public repo: never commit secrets, `.env`, screenshots or files from the OneDrive folder.
 Plane gate: opt-out (personal repo; the owner forbids Plane). Recorded as Deferred decision #2.
 
 ## Forecast
@@ -122,7 +122,7 @@ Linked contract files (pinned BEFORE any fan-out, transcribed into code by phase
 | D4 | IPC shape | One `req` struct argument per command, camelCase JSON, `Result<T, AppError>`, i64 exported as TS `number` (`#[ts(type = "number")]`), enums as camelCase string unions; full list in `contract-tauri-ipc.md` |
 | D5 | Images to the webview | One async custom URI scheme `ssimg` (`http://ssimg.localhost/thumb/<id>/<w>`, `/full/<id>`); no asset-protocol scope |
 | D6 | Sidecar process | Rust spawns `<sidecar-venv>\Scripts\python.exe -m ss_sidecar` with `tokio::process` (not Tauri `externalBin`); absent venv = state `absent`, app keeps working |
-| D7 | Delivery | Each lane commits on its own local branch in its own `git worktree`; integration phases merge with `git merge --no-ff`; no PR. Amended 2026-11-23 (owner): after each merge into `main`, `git push origin main` to the private GitHub repo and check the CI run is green (Deferred decision #28) |
+| D7 | Delivery | Each lane commits on its own local branch in its own `git worktree`; integration phases merge with `git merge --no-ff`; no PR. Amended 2026-11-23 (owner, twice): each phase runs on branch `phase-<id>` from an up-to-date `main`, is pushed, opened as a PR into `main` on the public GitHub repo, squash-merged once CI is green, then `main` is pulled locally (Deferred decision #28) |
 | D8 | Destructive ops | In-app trash (file untouched) is the default "Delete"; Recycle Bin is an explicit action (undoable); permanent delete is a two-step token + typed `DELETE` flow, never undoable, never default, never bound to a single key |
 | D9 | UI state | Theme, density, motion, language, layout in `localStorage` (owner rule); library roots in the `library_root` table; hotkey, watcher, autostart and the other backend settings in the `setting` table |
 | D10 | Test data | Tests and Accept scripts use generated fixture libraries under `%TEMP%` with their own `SS_DATA_DIR`; the real catalog and the OneDrive folder are only ever READ by Accept scripts (counts); `ssctl undo` takes an explicit batch id; Accept scripts that launch the app first FAIL if a Screenshot Studio process is already running (single-instance would hijack the run) |
@@ -247,7 +247,7 @@ Ordered irreversible / costliest first.
 | 25 | Lane Accept shape | bare `cargo test` / `bunx vitest run` / `pytest dir` / per-phase runner script | `lane-tests.mjs` with the phase's own test files (D11) | the validation wave showed a bare runner passes on earlier phases' tests (vacuous green) | edit each phase `Accept:` |
 | 26 | Integer typing in TS bindings | per-field ts override / ts-rs config | explicit override per field shape (`number`, `number | null`, `number[]`), `bigint` banned by test | `#[ts(type)]` replaces the whole type, so `Option`/`Vec` need their own string | contract-tauri-ipc rule 3 |
 | 27 | Container deletions (root/tag/album/filter) | journal + undo / confirm only | confirm dialog, not journaled, never touches files | undoing a cascade of tags/notes needs a snapshot store, YAGNI for a catalog-only loss | add a soft-delete column later |
-| 28 | Remote + CI | local only / private GitHub + Actions | private `Nghaiz/screenshot-studio`, SSH remote `origin`; CI on push to `main` and on PRs: `ui` job (lane runner over `src/**/*.test.ts`, `npm run build`) and `rust` job (lane runner over the contract test, `cargo test --workspace`, `cargo build -p screenshot-studio`), both `windows-latest` | owner asked for it in the session of 2026-11-23, overriding the earlier local-only rule | `git remote remove origin` and delete the repo |
+| 28 | Remote + CI | local only / GitHub + Actions | public `Nghaiz/screenshot-studio` (owner chose public over private on 2026-11-23), SSH remote `origin`, one PR per phase, squash-merge on green CI; CI on push to `main` and on PRs: `ui` job (lane runner over `src/**/*.test.ts`, `npm run build`) and `rust` job (lane runner over the contract test, `cargo test --workspace`, `cargo build -p screenshot-studio`), both `windows-latest` | owner asked for it in the session of 2026-11-23, overriding the earlier local-only rule | `git remote remove origin` and delete the repo |
 | 24 | Merge-up tree | tree / flat | flat lane plan (tree preflight hard-stopped: not a git repo; see `## Tree step`) | no repo yet, and never a remote or PR; lanes merge locally per D7 | re-plan after 1.1 if wanted |
 
 
