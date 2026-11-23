@@ -1,9 +1,15 @@
-//! Screenshot Studio Tauri shell. Phase 1.1: every plugin registered with no behaviour yet, every
-//! contract command wired to its stub (contract_test.rs (e) checks this handler list).
+//! Screenshot Studio Tauri shell: plugins, the `ss-core` app state, the async `ssimg` scheme (served
+//! off the main thread) and every contract command (contract_test.rs (e) checks this handler list).
 
 mod commands;
+mod state;
 
 use commands::{ai, edit, fileops, library, organize, query};
+use ss_core::AppCore;
+use ss_core::contract::ipc::ssimg;
+use tauri::Manager;
+
+use state::{AppState, http_response};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,6 +24,22 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_drag::init())
+        .setup(|app| {
+            let core = AppCore::open_default()?;
+            app.manage(AppState { core });
+            Ok(())
+        })
+        .register_asynchronous_uri_scheme_protocol(ssimg::SCHEME, |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let path = request.uri().path().to_owned();
+            tauri::async_runtime::spawn_blocking(move || {
+                let response = match app.try_state::<AppState>() {
+                    Some(state) => state.core.ssimg(&path),
+                    None => ss_core::ssimg::SsimgResponse { status: 503, headers: Vec::new(), body: Vec::new() },
+                };
+                responder.respond(http_response(response));
+            });
+        })
         .invoke_handler(tauri::generate_handler![
             library::get_app_info,
             library::add_library_root,
