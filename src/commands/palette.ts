@@ -1,7 +1,8 @@
 // Ctrl+K palette commands, as data. Safety (design-intent § Safety): the palette can reach the trash view,
-// the in-app trash and the Recycle Bin confirm dialog, NEVER `request_permanent_delete` / `delete_permanently`.
-// browse.test.tsx runs every command below against the mock and asserts that.
-import { askRecycle, notify, pickAndAddFolder, reindex, trashImages, undo } from "../actions/images";
+// the in-app trash and the Recycle Bin confirm dialog, NEVER `request_permanent_delete` / `delete_permanently`
+// nor the permanent delete dialog. browse.test.tsx and delete-dialogs.test.tsx run every command below
+// against the mock and assert that.
+import { askRecycle, notify, pickAndAddFolder, reindex, restoreImages, trashImages, undo } from "../actions/images";
 import type { ImageList } from "../data/images";
 import type { MessageKey, Translate } from "../i18n";
 import { LANGUAGES } from "../i18n/languages";
@@ -32,6 +33,14 @@ const simple = (id: string, key: MessageKey, run: PaletteCommand["run"], shortcu
 
 const prefs = () => usePrefs.getState();
 const view = () => useView.getState();
+
+/** Opens an organize dialog for the selection (or the focused image). */
+const dialogFor = (kind: "tags" | "album" | "rename" | "move" | "copy") => ({ list }: CommandContext) => {
+  const ids = targetIds(list.items);
+  if (ids.length === 0) return notify("actions.nothingSelected");
+  if (kind === "move" || kind === "copy") view().openDialog({ kind: "move", ids, mode: kind, destDir: null });
+  else view().openDialog({ kind, ids });
+};
 
 export const PALETTE_COMMANDS: readonly PaletteCommand[] = [
   simple("go.library", "cmd.goLibrary", () => view().setView("library")),
@@ -75,6 +84,17 @@ export const PALETTE_COMMANDS: readonly PaletteCommand[] = [
   }, "C"),
   simple("images.trash", "cmd.trash", ({ list }) => trashImages(targetIds(list.items)), "Delete"),
   simple("images.recycle", "cmd.recycle", ({ list }) => askRecycle(targetIds(list.items)), "Shift+Delete"),
+  simple("images.restore", "cmd.restore", ({ list }) => restoreImages(targetIds(list.items))),
+  simple("images.tags", "cmd.tags", dialogFor("tags")),
+  simple("images.album", "cmd.addToAlbum", dialogFor("album")),
+  simple("images.move", "cmd.move", dialogFor("move")),
+  simple("images.copy", "cmd.copy", dialogFor("copy")),
+  simple("images.rename", "cmd.rename", dialogFor("rename")),
+  simple("filters.toggle", "cmd.toggleFilters", () => view().setFiltersOpen(!view().filtersOpen)),
+  simple("filters.reset", "cmd.resetFilters", () => view().resetFilter()),
+  simple("filters.save", "cmd.saveFilter", () => view().openDialog({ kind: "saveFilter" })),
+  simple("panel.details", "cmd.details", () => view().setSidePanel(view().sidePanel === "details" ? "none" : "details")),
+  simple("panel.history", "cmd.history", () => view().setSidePanel(view().sidePanel === "history" ? "none" : "history")),
   simple("undo", "cmd.undo", () => undo(null), "Ctrl+Z"),
   simple("library.reindex", "cmd.reindex", () => reindex()),
   simple("library.addFolder", "cmd.addFolder", async () => {

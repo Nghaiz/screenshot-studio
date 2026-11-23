@@ -1,9 +1,14 @@
 // The browsing surface: one scroll container (role=grid, keyboard focus stays on it; the focused cell is
 // announced via aria-activedescendant), a layout body chosen by the prefs, and an optional date scrubber.
-import { useCallback, useEffect, useRef, type MouseEvent } from "react";
+// Pointer: click / Shift / Ctrl selection, lasso on the background, in-app drag of cells (onto sidebar
+// targets, or onto another cell to reorder an album).
+import { useCallback, useEffect, useRef, type DragEvent, type MouseEvent } from "react";
+import { reorderAlbum } from "../actions/organize";
+import { notify } from "../actions/report";
 import { handleGridKey } from "../commands/gridKeys";
 import { rangeIds } from "../commands/targets";
 import { Cell, cellDomId } from "../components/Cell";
+import { readDragIds, setDragIds, isImageDrag } from "../lib/dnd";
 import type { ImageList } from "../data/images";
 import { useTimeline } from "../data/library";
 import { useT } from "../i18n";
@@ -11,6 +16,7 @@ import { usePrefs } from "../state/prefs";
 import { useView } from "../state/view";
 import { DENSITY_GAP } from "../themes";
 import { JustifiedGrid } from "./JustifiedGrid";
+import { Lasso, useLasso } from "./Lasso";
 import { ListView } from "./ListView";
 import { MasonryGrid } from "./MasonryGrid";
 import { Scrubber } from "./Scrubber";
@@ -58,6 +64,29 @@ export function Gallery({ list }: { list: ImageList }) {
     [list.items],
   );
   const onOpen = useCallback((index: number) => useView.getState().openLightbox({ mode: "view", index }), []);
+  const onDragStart = useCallback(
+    (index: number, e: DragEvent) => {
+      const item = list.items[index];
+      if (!item) return;
+      const sel = useView.getState().selection;
+      setDragIds(e, sel.has(item.id) ? [...sel] : [item.id]);
+    },
+    [list.items],
+  );
+  const albumId = useView((s) => s.filter.albumId);
+  const onDropOn = useCallback(
+    (index: number, e: DragEvent) => {
+      if (albumId === null || !isImageDrag(e)) return;
+      e.preventDefault();
+      const dragged = readDragIds(e);
+      if (!dragged) return;
+      const order = albumOrder(list.items.map((i) => i.id), dragged, list.items[index]?.id ?? null);
+      if (list.items.length < list.total) notify("organize.reorderNeedsAll");
+      else if (order) void reorderAlbum(albumId, order);
+    },
+    [albumId, list.items, list.total],
+  );
+  const lasso = useLasso(scrollRef, list.items);
 
   const renderCell: RenderCell = (index, style, variant) => {
     const item = list.items[index];
@@ -72,6 +101,8 @@ export function Gallery({ list }: { list: ImageList }) {
         variant={variant}
         onPick={onPick}
         onOpen={onOpen}
+        onDragStart={onDragStart}
+        onDropOn={albumId === null ? undefined : onDropOn}
       />
     );
   };
@@ -109,14 +140,30 @@ export function Gallery({ list }: { list: ImageList }) {
         onKeyDown={(e) => {
           if (handleGridKey(e, list, navRef.current)) e.preventDefault();
         }}
+        {...lasso.handlers}
       >
         {size.width > 0 && body}
       </div>
+      <Lasso rect={lasso.rect} />
       {isTimeline && buckets.length > 0 && (
         <Scrubber buckets={buckets} lang={language} onJump={(first) => useView.getState().focus(first)} />
       )}
     </div>
   );
+}
+
+/**
+ * New album order after dropping `dragged` onto the image `targetId`: the dragged ids (in their current
+ * order) move to just before the target. Null when nothing would change.
+ */
+export function albumOrder(current: readonly number[], dragged: readonly number[], targetId: number | null): number[] | null {
+  const moving = new Set(dragged);
+  if (targetId === null || moving.has(targetId)) return null;
+  const rest = current.filter((id) => !moving.has(id));
+  const block = current.filter((id) => moving.has(id));
+  const at = rest.indexOf(targetId);
+  const next = [...rest.slice(0, at), ...block, ...rest.slice(at)];
+  return next.every((id, i) => id === current[i]) ? null : next;
 }
 
 function Centered({ text }: { text: string }) {

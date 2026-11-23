@@ -1,21 +1,23 @@
-// Mock backend for the UI lane (phase 1.3): `mockIPC` from @tauri-apps/api/mocks answering every command
-// the browse UI sends, over a deterministic 10,000-image catalog. Used by the tests and by
+// Mock backend for the UI lane (phases 1.3, 2.2): `mockIPC` from @tauri-apps/api/mocks answering every command
+// the browse and organize UI sends, over a deterministic 10,000-image catalog. Used by the tests and by
 // `VITE_MOCK_IPC=1 npm run dev` in a plain browser. Request/response types come from @bindings only.
 import { clearMocks, mockConvertFileSrc, mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import type { CommandMap } from "@bindings/commands";
 import type { ImageSummary } from "@bindings/ImageSummary";
 import type { LibraryRoot } from "@bindings/LibraryRoot";
-import type { OpResult } from "@bindings/OpResult";
 import { PREVIEW_WIDTH } from "../lib/defaults";
 import type { EventMap, EventName } from "../lib/events";
 import { setImageUrlOverride } from "../lib/ssimg";
 import { appError, countBy, queryImages, timeline } from "./catalog";
 import { generateImages, MOCK_IMAGE_COUNT, MOCK_NOW_MS, mockRoot, placeholderUrl } from "./data";
+import { createOrganize } from "./organize";
 
 export interface MockCall {
   cmd: string;
   payload: unknown;
+  /** What the mock answered (absent while running or when it threw). */
+  result?: unknown;
 }
 
 export interface MockHandle {
@@ -23,6 +25,8 @@ export interface MockHandle {
   calls: MockCall[];
   images: ImageSummary[];
   emit: <E extends EventName>(event: E, payload: EventMap[E]) => Promise<void>;
+  /** Calls a mock command directly (test setup: create tags, albums, ...), bypassing the call log. */
+  invoke: <K extends keyof CommandMap>(cmd: K, req: CommandMap[K]["req"]) => CommandMap[K]["res"];
   uninstall: () => void;
 }
 
@@ -31,8 +35,8 @@ export interface MockOptions {
   firstRun?: boolean;
 }
 
-type Journal = { batchId: number; undo: () => void };
 type Handler = (req: never) => unknown;
+const MISSING_IMAGE_URL = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
 export function installMockIpc(opts: MockOptions = {}): MockHandle {
   const count = opts.count ?? MOCK_IMAGE_COUNT;
@@ -40,10 +44,8 @@ export function installMockIpc(opts: MockOptions = {}): MockHandle {
   const byId = new Map(images.map((i) => [i.id, i]));
   const roots: LibraryRoot[] = opts.firstRun ? [] : [mockRoot(count)];
   const settings: Record<string, unknown> = {};
-  const journal: Journal[] = [];
   const calls: MockCall[] = [];
   const timers = new Set<ReturnType<typeof setTimeout>>();
-  let batchSeq = 0;
   let jobSeq = 0;
 
   const fire = <E extends EventName>(event: E, payload: EventMap[E]) => emit(event, payload);
@@ -55,15 +57,8 @@ export function installMockIpc(opts: MockOptions = {}): MockHandle {
     return img;
   };
 
-  /** Applies `apply` to each id, journals one undoable batch restoring the previous values. */
-  function mutate(ids: number[], apply: (img: ImageSummary) => void): OpResult {
-    const before = ids.map((id) => ({ ...get(id) }));
-    ids.forEach((id) => apply(get(id)));
-    const batchId = ++batchSeq;
-    journal.push({ batchId, undo: () => before.forEach((b) => Object.assign(get(b.id), b)) });
-    changed("fileOp", ids);
-    return { batchId, affected: ids.length, failed: [] };
-  }
+  const organize = createOrganize({ images, byId, roots, get, changed }, () => MOCK_NOW_MS);
+  const { mutate, filterContext: ctx } = organize;
 
   const visible = () => images.filter((i) => !i.missing);
   const counts = () => {
@@ -89,35 +84,25 @@ export function installMockIpc(opts: MockOptions = {}): MockHandle {
       byFolder: countBy(visible(), (i) => i.folder),
       byCategory: [], topTags: [], duplicatesExact: 0, duplicatesSimilar: 0,
     }),
-    query_images: (q) => queryImages(images, q),
+    query_images: (q) => queryImages(images, q, ctx),
     get_image: ({ id }) => {
       const img = get(id);
       const root = roots.find((r) => r.id === img.rootId)?.path ?? "mock";
       const absPath = [root, img.folder, img.fileName].filter(Boolean).join("\\");
-      return { ...img, absPath, createdMs: img.takenMs, contentHash: null, note: null, tags: [], albums: [], ocrText: null, categories: [], blurScore: null };
+      return { ...img, absPath, createdMs: img.takenMs, contentHash: null, ...organize.detailOf(id), ocrText: null, categories: [], blurScore: null };
     },
-    get_timeline: ({ query, bucket }) => ({ buckets: timeline(images, query, bucket) }),
+    get_timeline: ({ query, bucket }) => ({ buckets: timeline(images, query, bucket, ctx) }),
     get_settings: () => ({ ...settings }),
     set_setting: ({ key, value }) => {
       settings[key] = value;
       return null;
     },
-    list_tags: () => [],
-    list_albums: () => [],
-    list_smart_filters: () => [],
-    trash_images: ({ imageIds }) => mutate(imageIds, (i) => (i.trashedAt = MOCK_NOW_MS)),
-    restore_images: ({ imageIds }) => mutate(imageIds, (i) => (i.trashedAt = null)),
-    recycle_images: ({ imageIds }) => mutate(imageIds, (i) => (i.missing = true)),
-    set_favorite: ({ imageIds, value }) => mutate(imageIds, (i) => (i.favorite = value)),
-    set_rating: ({ imageIds, rating }) => mutate(imageIds, (i) => (i.rating = rating)),
-    undo: ({ batchId }) => {
-      const at = batchId === null ? journal.length - 1 : journal.findIndex((j) => j.batchId === batchId);
-      if (at < 0) throw appError("notFound", "nothing to undo");
-      const [entry] = journal.splice(at, 1);
-      entry.undo();
-      changed("undo", null);
-      return { batchId: entry.batchId, affected: 1, failed: [] };
-    },
+    ...organize.handlers,
+    trash_images: ({ imageIds }) => mutate("trash", imageIds, (i) => (i.trashedAt = MOCK_NOW_MS)),
+    restore_images: ({ imageIds }) => mutate("restore", imageIds, (i) => (i.trashedAt = null)),
+    recycle_images: ({ imageIds }) => mutate("recycle", imageIds, (i) => (i.missing = true)),
+    set_favorite: ({ imageIds, value }) => mutate("favorite", imageIds, (i) => (i.favorite = value)),
+    set_rating: ({ imageIds, rating }) => mutate("rating", imageIds, (i) => (i.rating = rating)),
     add_library_root: ({ path }) => {
       const root = { ...mockRoot(images.length), id: roots.length + 1, path, protectedRoot: /\\OneDrive\\/i.test(path) };
       roots.push(root);
@@ -131,27 +116,43 @@ export function installMockIpc(opts: MockOptions = {}): MockHandle {
     cancel_job: () => null,
   };
 
+  // Serialize like real IPC: the UI must never hold a live reference into the mock's state.
+  const run = (h: Handler, req: unknown) => {
+    const res = h(JSON.parse(JSON.stringify(req)) as never);
+    return res === null || res === undefined ? null : JSON.parse(JSON.stringify(res));
+  };
+
   mockConvertFileSrc("windows");
   mockIPC(
     (cmd, payload) => {
-      calls.push({ cmd, payload });
+      const call: MockCall = { cmd, payload };
+      calls.push(call);
       if (cmd === "plugin:clipboard-manager|write_text") return null;
       if (cmd === "plugin:dialog|open") return "D:\\Mock\\Screenshots";
       const h = handlers[cmd as keyof CommandMap] as Handler | undefined;
       if (!h) throw appError("internal", `mock: command \`${cmd}\` is not implemented`);
       const req = (payload as { req?: unknown } | undefined)?.req ?? null;
-      // Serialize like real IPC: the UI must never hold a live reference into the mock's state.
-      const res = h(req as never);
-      return res === null || res === undefined ? null : JSON.parse(JSON.stringify(res));
+      call.result = run(h, req);
+      return call.result;
     },
     { shouldMockEvents: true },
   );
-  setImageUrlOverride((ref, what) => placeholderUrl(get(ref.id), what.kind === "thumb" ? what.width : PREVIEW_WIDTH * 2));
+  // A URL for an id the mock no longer has (purged while a cell is still on screen) is a broken image, like
+  // the real scheme's 404, never an exception during render.
+  setImageUrlOverride((ref, what) => {
+    const img = byId.get(ref.id);
+    return img ? placeholderUrl(img, what.kind === "thumb" ? what.width : PREVIEW_WIDTH * 2) : MISSING_IMAGE_URL;
+  });
 
   return {
     calls,
     images,
     emit: fire,
+    invoke: (cmd, req) => {
+      const h = handlers[cmd] as Handler | undefined;
+      if (!h) throw appError("internal", `mock: command \`${cmd}\` is not implemented`);
+      return run(h, req);
+    },
     uninstall: () => {
       timers.forEach(clearTimeout);
       timers.clear();

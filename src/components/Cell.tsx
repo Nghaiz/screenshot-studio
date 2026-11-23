@@ -1,8 +1,15 @@
 // One gallery item. Loaded items show the 320 px thumbnail; unloaded indices show a shimmer placeholder.
-import { memo, type CSSProperties, type MouseEvent } from "react";
+//
+// Memory (Deferred decision #31, measured phase 2.2 in the release app on 6,300 fixture images): a fast
+// scroll that starts a fetch and decode for every cell it passes pushes Chromium's decoded-image memory
+// (renderer + GPU process) to ~813 MB. A cell therefore gets its <img> only after it has stayed mounted
+// THUMB_SETTLE_MS, so rows that fly past are never fetched or decoded. With that, a fast 20 s full scroll
+// peaks at 476-521 MB, and paging through every screen (all 6,300 decoded) at 494-501 MB. The first
+// screen alone is ~420 MB of WebView2 cost; more headroom needs a Chromium-side cap (phase 2.3).
+import { memo, useEffect, useState, type CSSProperties, type DragEvent, type MouseEvent } from "react";
 import type { ImageSummary } from "@bindings/ImageSummary";
 import { useT } from "../i18n";
-import { GRID_THUMB_WIDTH } from "../lib/defaults";
+import { GRID_THUMB_WIDTH, THUMB_SETTLE_MS } from "../lib/defaults";
 import { thumbUrl } from "../lib/ssimg";
 
 export interface CellProps {
@@ -14,13 +21,28 @@ export interface CellProps {
   variant?: "tile" | "row";
   onPick: (index: number, e: MouseEvent) => void;
   onOpen: (index: number) => void;
+  onDragStart?: (index: number, e: DragEvent) => void;
+  /** Set only where cells are drop targets (album view: drop = reorder). */
+  onDropOn?: (index: number, e: DragEvent) => void;
 }
 
 export const cellDomId = (index: number) => `ss-cell-${index}`;
 
-function CellImpl({ index, item, focused, selected, style, variant = "tile", onPick, onOpen }: CellProps) {
+/** True once `key` has been the same for `ms` (resets when the cell is reused for another image). */
+export function useSettled(key: number | undefined, ms: number): boolean {
+  const [settledKey, setSettledKey] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (key === undefined) return;
+    const id = setTimeout(() => setSettledKey(key), ms);
+    return () => clearTimeout(id);
+  }, [key, ms]);
+  return key !== undefined && settledKey === key;
+}
+
+function CellImpl({ index, item, focused, selected, style, variant = "tile", onPick, onOpen, onDragStart, onDropOn }: CellProps) {
   const t = useT();
   const ready = item && item.thumbState === "ok";
+  const settled = useSettled(ready ? item.id : undefined, THUMB_SETTLE_MS);
   return (
     <div
       id={cellDomId(index)}
@@ -34,11 +56,15 @@ function CellImpl({ index, item, focused, selected, style, variant = "tile", onP
       style={style}
       onClick={(e) => onPick(index, e)}
       onDoubleClick={() => onOpen(index)}
+      draggable={!!item && !!onDragStart}
+      onDragStart={onDragStart && ((e) => onDragStart(index, e))}
+      onDragOver={onDropOn && ((e) => e.preventDefault())}
+      onDrop={onDropOn && ((e) => onDropOn(index, e))}
     >
       <div className={variant === "row" ? "h-10 w-16 shrink-0 overflow-hidden rounded" : "h-full w-full"}>
-        {ready ? (
+        {ready && settled ? (
           <img src={thumbUrl(item, GRID_THUMB_WIDTH)} alt="" loading="lazy" decoding="async" draggable={false} />
-        ) : !item || item.thumbState === "pending" ? (
+        ) : ready || !item || item.thumbState === "pending" ? (
           <div className="ss-shimmer h-full w-full" />
         ) : (
           <div className="ss-muted flex h-full w-full items-center justify-center text-lg" aria-hidden>
