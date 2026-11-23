@@ -1,7 +1,8 @@
-// Session view state (not persisted): current view, focus, selection, overlays, toasts, job progress.
+// Session view state (not persisted): current view, filter, focus, selection, overlays, toasts, job progress.
 import { create } from "zustand";
 import type { JobProgress } from "@bindings/JobProgress";
-import type { View } from "../lib/query";
+import type { MoveMode } from "@bindings/MoveMode";
+import { emptyFilter, type FilterSpec, type View } from "../lib/query";
 
 export type Lightbox =
   | { mode: "closed" }
@@ -15,15 +16,40 @@ export interface Toast {
   undoBatchId: number | null;
 }
 
+/** A catalog-only deletion (not journaled, contract rule 7): the dialog names what is lost before `run`. */
+export interface ConfirmRequest {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  run: () => Promise<void>;
+}
+
+/** One modal at a time. Permanent delete has its own kind and is opened only by a pointer click. */
+export type Dialog =
+  | { kind: "tags"; ids: number[] }
+  | { kind: "tagEdit"; tagId: number | null }
+  | { kind: "album"; ids: number[] }
+  | { kind: "albumEdit"; albumId: number | null }
+  | { kind: "move"; ids: number[]; mode: MoveMode; destDir: string | null }
+  | { kind: "rename"; ids: number[] }
+  | { kind: "saveFilter" }
+  | { kind: "confirm"; request: ConfirmRequest }
+  | { kind: "purge"; ids: number[] };
+
+export type SidePanel = "none" | "details" | "history";
+
 export interface ViewState {
   view: View;
-  folder: string | null;
+  filter: FilterSpec;
+  filtersOpen: boolean;
   focusIndex: number;
   selection: ReadonlySet<number>;
   anchorIndex: number | null;
   lightbox: Lightbox;
   paletteOpen: boolean;
   settingsOpen: boolean;
+  sidePanel: SidePanel;
+  dialog: Dialog | null;
   confirmRecycle: number[] | null;
   toasts: Toast[];
   jobs: Record<number, JobProgress>;
@@ -32,6 +58,10 @@ export interface ViewState {
 
   setView: (view: View) => void;
   setFolder: (folder: string | null) => void;
+  setFilter: (patch: Partial<FilterSpec>) => void;
+  replaceFilter: (filter: FilterSpec) => void;
+  resetFilter: () => void;
+  setFiltersOpen: (open: boolean) => void;
   focus: (index: number, scroll?: boolean) => void;
   setSelection: (ids: Iterable<number>, anchorIndex?: number | null) => void;
   toggleSelected: (id: number) => void;
@@ -40,6 +70,9 @@ export interface ViewState {
   closeLightbox: () => void;
   setPalette: (open: boolean) => void;
   setSettings: (open: boolean) => void;
+  setSidePanel: (panel: SidePanel) => void;
+  openDialog: (dialog: Dialog) => void;
+  closeDialog: () => void;
   askRecycle: (ids: number[] | null) => void;
   toast: (t: Omit<Toast, "id">) => number;
   dismissToast: (id: number) => void;
@@ -49,22 +82,32 @@ export interface ViewState {
 
 let toastSeq = 0;
 
+/** A new result set: focus the first item, drop the selection. */
+const fresh = { focusIndex: 0, anchorIndex: null };
+
 export const useView = create<ViewState>((set) => ({
   view: "library",
-  folder: null,
+  filter: emptyFilter(),
+  filtersOpen: false,
   focusIndex: 0,
   selection: new Set(),
   anchorIndex: null,
   lightbox: { mode: "closed" },
   paletteOpen: false,
   settingsOpen: false,
+  sidePanel: "none",
+  dialog: null,
   confirmRecycle: null,
   toasts: [],
   jobs: {},
   scrollRequest: 0,
 
-  setView: (view) => set({ view, focusIndex: 0, selection: new Set(), anchorIndex: null, lightbox: { mode: "closed" } }),
-  setFolder: (folder) => set({ folder, focusIndex: 0, selection: new Set(), anchorIndex: null }),
+  setView: (view) => set({ view, ...fresh, selection: new Set(), lightbox: { mode: "closed" } }),
+  setFolder: (folder) => set((s) => ({ filter: { ...s.filter, folders: folder === null ? [] : [folder] }, ...fresh, selection: new Set() })),
+  setFilter: (patch) => set((s) => ({ filter: { ...s.filter, ...patch }, ...fresh, selection: new Set() })),
+  replaceFilter: (filter) => set({ filter, ...fresh, selection: new Set() }),
+  resetFilter: () => set({ filter: emptyFilter(), ...fresh, selection: new Set() }),
+  setFiltersOpen: (filtersOpen) => set({ filtersOpen }),
   focus: (index, scroll = true) =>
     set((s) => ({ focusIndex: Math.max(0, index), scrollRequest: scroll ? s.scrollRequest + 1 : s.scrollRequest })),
   setSelection: (ids, anchorIndex) =>
@@ -80,6 +123,9 @@ export const useView = create<ViewState>((set) => ({
   closeLightbox: () => set({ lightbox: { mode: "closed" } }),
   setPalette: (paletteOpen) => set({ paletteOpen }),
   setSettings: (settingsOpen) => set({ settingsOpen }),
+  setSidePanel: (sidePanel) => set({ sidePanel }),
+  openDialog: (dialog) => set({ dialog, paletteOpen: false }),
+  closeDialog: () => set({ dialog: null }),
   askRecycle: (confirmRecycle) => set({ confirmRecycle }),
   toast: (t) => {
     const id = ++toastSeq;

@@ -1,5 +1,5 @@
 // One gallery item. Loaded items show the 320 px thumbnail; unloaded indices show a shimmer placeholder.
-import { memo, type CSSProperties, type MouseEvent } from "react";
+import { memo, type CSSProperties, type DragEvent, type MouseEvent } from "react";
 import type { ImageSummary } from "@bindings/ImageSummary";
 import { useT } from "../i18n";
 import { GRID_THUMB_WIDTH } from "../lib/defaults";
@@ -14,11 +14,14 @@ export interface CellProps {
   variant?: "tile" | "row";
   onPick: (index: number, e: MouseEvent) => void;
   onOpen: (index: number) => void;
+  onDragStart?: (index: number, e: DragEvent) => void;
+  /** Set only where cells are drop targets (album view: drop = reorder). */
+  onDropOn?: (index: number, e: DragEvent) => void;
 }
 
 export const cellDomId = (index: number) => `ss-cell-${index}`;
 
-function CellImpl({ index, item, focused, selected, style, variant = "tile", onPick, onOpen }: CellProps) {
+function CellImpl({ index, item, focused, selected, style, variant = "tile", onPick, onOpen, onDragStart, onDropOn }: CellProps) {
   const t = useT();
   const ready = item && item.thumbState === "ok";
   return (
@@ -34,6 +37,10 @@ function CellImpl({ index, item, focused, selected, style, variant = "tile", onP
       style={style}
       onClick={(e) => onPick(index, e)}
       onDoubleClick={() => onOpen(index)}
+      draggable={!!item && !!onDragStart}
+      onDragStart={onDragStart && ((e) => onDragStart(index, e))}
+      onDragOver={onDropOn && ((e) => e.preventDefault())}
+      onDrop={onDropOn && ((e) => onDropOn(index, e))}
     >
       <div className={variant === "row" ? "h-10 w-16 shrink-0 overflow-hidden rounded" : "h-full w-full"}>
         {ready ? (

@@ -24,3 +24,18 @@ export const FALLBACK_ASPECT = 16 / 9;
 
 export const SLIDESHOW_MS = 3000;
 export const TOAST_MS = 5000;
+
+/** Pause after the last key before the search text becomes part of the query. */
+export const SEARCH_DEBOUNCE_MS = 250;
+/** Pause after the last key before the bulk-rename dialog asks for a new preview. */
+export const RENAME_PREVIEW_DEBOUNCE_MS = 200;
+/** Colour given to a new tag until the user picks one. */
+export const DEFAULT_TAG_COLOR = "#7C3AED";
+/** Colour-filter tolerance (0..100) when the colour filter is first turned on. */
+export const DEFAULT_COLOR_TOLERANCE = 20;
+/** How many thumbnails the permanent delete dialog shows (design-intent § Safety). */
+export const PURGE_PREVIEW_COUNT = 6;
+/** In-app drag payload type (drag-out to the OS is phase 4.2). */
+export const DRAG_MIME = "application/x-ss-image-ids";
+/** A pointer drag shorter than this (px) on the grid background is a click, not a lasso. */
+export const LASSO_MIN_PX = 4;
