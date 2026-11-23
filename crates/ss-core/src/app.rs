@@ -1,9 +1,10 @@
 //! `AppCore`: the UI-free facade over the catalog, scanner, thumbnail pass, jobs and `ssimg`.
-//! `src-tauri` commands and `ssctl` are thin wrappers over these methods.
+//! `src-tauri` commands and `ssctl` are thin wrappers over these methods. The phase 3.2 surface
+//! (sidecar, AI job, semantic search, smart features) is in `app_smart.rs`.
 
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 
@@ -15,9 +16,11 @@ use crate::jobs::{EventSink, JobRegistry, ProgressReporter};
 use crate::scan::{self, ScanReport};
 use crate::ssimg::{self, SsimgResponse};
 use crate::thumbs::{self, ThumbReport, ThumbScope};
+use crate::ai::semantic::SemanticIndex;
 use crate::ops::purge::DeleteTokens;
 use crate::ops::{files, journal, organize, purge};
-use crate::{ops, paths, query};
+use crate::sidecar::{Sidecar, SidecarLaunch, SidecarLayout};
+use crate::{ops, paths, query, smart};
 
 /// What an index run does after the scan.
 #[derive(Debug, Clone, Copy)]
@@ -40,10 +43,17 @@ pub struct IndexReport {
 }
 
 pub struct AppCore {
-    catalog: Catalog,
-    fa: Arc<dyn FileAccess>,
-    jobs: JobRegistry,
+    pub(crate) catalog: Catalog,
+    pub(crate) fa: Arc<dyn FileAccess>,
+    pub(crate) jobs: JobRegistry,
     delete_tokens: DeleteTokens,
+    /// The AI sidecar; not started until [`AppCore::start_sidecar`] (state `absent` until then).
+    pub(crate) sidecar: Sidecar,
+    pub(crate) semantic: SemanticIndex,
+    /// Where the sidecar source lives (None = [`SidecarLayout::detect`] at start).
+    pub(crate) sidecar_layout: Mutex<Option<SidecarLayout>>,
+    /// A fixed launch replacing the settings-based one (tests, [`AppCore::start_sidecar_with`]).
+    pub(crate) sidecar_launch: Mutex<Option<SidecarLaunch>>,
 }
 
 impl AppCore {
@@ -53,6 +63,10 @@ impl AppCore {
             fa,
             jobs: JobRegistry::default(),
             delete_tokens: DeleteTokens::default(),
+            sidecar: Sidecar::default(),
+            semantic: SemanticIndex::default(),
+            sidecar_layout: Mutex::new(None),
+            sidecar_launch: Mutex::new(None),
         }))
     }
 
@@ -75,14 +89,7 @@ impl AppCore {
             contract_version: CONTRACT_VERSION,
             data_dir: self.data_dir().to_string_lossy().into_owned(),
             library_roots: self.catalog.read(catalog::list_roots)?,
-            // The sidecar supervisor lands in phase 3.2.
-            sidecar: SidecarStatus {
-                state: SidecarState::Absent,
-                detail: Some("AI sidecar not available in this build".into()),
-                capabilities: Vec::new(),
-                device: None,
-                version: None,
-            },
+            sidecar: self.sidecar.status(),
             warnings: Vec::new(),
         })
     }
@@ -103,8 +110,10 @@ impl AppCore {
         ops::set_setting(caller, &self.catalog, req)
     }
 
+    /// `textMode` `semantic` / `any` add the semantic arm when the sidecar is ready (`app_smart.rs`).
     pub fn query_images(&self, q: &ImageQuery) -> Result<ImagePage, AppError> {
-        self.catalog.read(|conn| query::query_images(conn, q))
+        let sem = self.semantic_arm(q)?;
+        self.catalog.read(|conn| query::query_images_with(conn, q, sem.as_ref()))
     }
 
     pub fn get_image(&self, req: GetImageReq) -> Result<ImageDetail, AppError> {
@@ -112,7 +121,8 @@ impl AppCore {
     }
 
     pub fn get_timeline(&self, req: &GetTimelineReq) -> Result<TimelineResult, AppError> {
-        self.catalog.read(|conn| query::get_timeline(conn, req))
+        let sem = self.semantic_arm(&req.query)?;
+        self.catalog.read(|conn| query::get_timeline_with(conn, req, sem.as_ref()))
     }
 
     pub fn get_counts(&self) -> Result<CatalogCounts, AppError> {
@@ -295,6 +305,11 @@ impl AppCore {
             for root in &roots {
                 let t = self.thumbs_for(Some(root.id), auto_cloud, sink, reporter, cancel)?;
                 add_thumbs(&mut report.thumbs, &t);
+            }
+            // Rows thumbnailed before phase 3.2 have no blur score yet (thumbnail files only).
+            reporter.report("blur", 0, 0, None);
+            for root in &roots {
+                smart::issues::backfill_blur(&self.catalog, Some(root.id), cancel)?;
             }
         }
         Ok(report)

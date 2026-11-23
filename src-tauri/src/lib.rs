@@ -1,6 +1,7 @@
 //! Screenshot Studio Tauri shell: plugins, the `ss-core` app state, the main window (WebView2 profile in the
-//! data dir), the async `ssimg` scheme (served off the main thread) and every contract command
-//! (contract_test.rs (e) checks this handler list).
+//! data dir), the async `ssimg` scheme (served off the main thread), the AI sidecar (started after the window,
+//! status pushed as `sidecar-status`, stopped on exit) and every contract command (contract_test.rs (e) checks
+//! this handler list).
 
 mod commands;
 mod state;
@@ -8,8 +9,9 @@ mod window;
 
 use commands::{ai, edit, fileops, library, organize, query};
 use ss_core::AppCore;
-use ss_core::contract::ipc::ssimg;
-use tauri::Manager;
+use ss_core::contract::ipc::{events, ssimg};
+use ss_core::sidecar::SidecarLayout;
+use tauri::{Emitter, Manager};
 
 use state::{AppState, http_response};
 
@@ -30,9 +32,27 @@ pub fn run() {
         .setup(|app| {
             let core = AppCore::open_default()?;
             let data_dir = core.data_dir().to_path_buf();
-            app.manage(AppState { core });
+            // Sidecar source: the bundled resources when they carry it (`<resource_dir>/sidecar` and
+            // `<resource_dir>/contracts/sidecar-jsonrpc.schema.json`, mapped by phase 3.4), else the dev checkout.
+            if let Ok(res) = app.path().resource_dir() {
+                let layout = SidecarLayout::under(&res);
+                if layout.is_present() {
+                    core.set_sidecar_layout(layout);
+                }
+            }
+            let handle = app.handle().clone();
+            core.sidecar().set_listener(move |s| {
+                if let Err(e) = handle.emit(events::SIDECAR_STATUS, s) {
+                    eprintln!("screenshot-studio: emit {}: {e}", events::SIDECAR_STATUS);
+                }
+            });
+            app.manage(AppState { core: core.clone() });
             // After `manage`: the page's first command or `ssimg` request must find the state.
             window::create_main(app, &data_dir)?;
+            // Absent venv = state `absent`, nothing spawned; the app works the same minus AI (D6).
+            if let Err(e) = core.start_sidecar() {
+                eprintln!("screenshot-studio: sidecar: {}: {}", e.message, e.detail.unwrap_or_default());
+            }
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol(ssimg::SCHEME, |ctx, request, responder| {
@@ -103,6 +123,14 @@ pub fn run() {
             edit::convert_images,
             edit::stitch_images,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Screenshot Studio");
+        .build(tauri::generate_context!())
+        .expect("error while building Screenshot Studio")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // `shutdown`, then a kill after the shutdown wait (contract § Lifecycle 4).
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.core.shutdown_sidecar();
+                }
+            }
+        });
 }

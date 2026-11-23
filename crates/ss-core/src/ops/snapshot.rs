@@ -168,7 +168,7 @@ pub(crate) fn restore(tx: &Transaction<'_>, snap: &Snapshot, data_dir: &Path, ba
         tx.query_row("SELECT text FROM ocr_result WHERE image_id = ?1", [id], |r| r.get(0)).optional()?;
     tx.execute(
         "INSERT INTO text_fts (rowid, file_name, ocr_text, note) SELECT id, file_name, ?2, COALESCE(note, '') FROM image WHERE id = ?1",
-        rusqlite::params![id, ocr.unwrap_or_default()],
+        rusqlite::params![id, crate::filter::fts_ocr_text(&ocr.unwrap_or_default())],
     )?;
     Ok(id)
 }

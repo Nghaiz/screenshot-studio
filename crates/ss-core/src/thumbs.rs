@@ -1,5 +1,6 @@
 //! Thumbnail pass: for every `pending` image, ONE read + decode yields blake3, dHash, pHash, the real
-//! dimensions and the grid thumbnail (lossy WebP q80, long edge 320, never upscaled). The 1280
+//! dimensions, the grid thumbnail (lossy WebP q80, long edge 320, never upscaled) and its sharpness
+//! (`blur_score`, phase 3.2, [`crate::smart::blur`]). The 1280
 //! preview is made by `ssimg` on its first request ([`render_preview`]) and kept as a cache
 //! (contract-sqlite-schema.md § thumbnails, Deferred decision #29). Runs on a rayon
 //! pool of `available_parallelism() - 1` threads; results are written in batches of
@@ -70,7 +71,16 @@ struct Item {
 }
 
 enum Outcome {
-    Ok { id: i64, width: i64, height: i64, hash: String, dhash: Option<i64>, phash: Option<i64>, cloud: CloudState },
+    Ok {
+        id: i64,
+        width: i64,
+        height: i64,
+        hash: String,
+        dhash: Option<i64>,
+        phash: Option<i64>,
+        cloud: CloudState,
+        blur: Option<f64>,
+    },
     Offline { id: i64 },
     Error { id: i64 },
 }
@@ -140,12 +150,12 @@ pub fn thumb_pass(
 fn write_outcomes(tx: &rusqlite::Transaction<'_>, outcomes: Vec<Outcome>) -> Result<(), AppError> {
     for o in outcomes {
         match o {
-            Outcome::Ok { id, width, height, hash, dhash, phash, cloud } => {
+            Outcome::Ok { id, width, height, hash, dhash, phash, cloud, blur } => {
                 tx.prepare_cached(
                     "UPDATE image SET width = ?2, height = ?3, content_hash = ?4, dhash = ?5, phash = ?6,
-                        thumb_state = 'ok', cloud_state = ?7 WHERE id = ?1",
+                        thumb_state = 'ok', cloud_state = ?7, blur_score = ?8 WHERE id = ?1",
                 )?
-                .execute(params![id, width, height, hash, dhash, phash, enum_str(&cloud)])?;
+                .execute(params![id, width, height, hash, dhash, phash, enum_str(&cloud), blur])?;
             }
             Outcome::Offline { id } => {
                 tx.prepare_cached("UPDATE image SET thumb_state = 'offline', cloud_state = 'cloudOnly' WHERE id = ?1")?
@@ -198,13 +208,14 @@ fn render(data_dir: &Path, fa: &dyn FileAccess, item: &Item) -> Result<Outcome, 
         hash_i64(&HasherConfig::new().hash_alg(HashAlg::Mean).hash_size(HASH_SIDE, HASH_SIDE).preproc_dct().to_hasher(), &img);
 
     let webp = encode_thumb(img.into_rgb8(), THUMB_GRID as u32)?;
+    let blur = crate::smart::blur::blur_of_thumbnail(&webp);
     write_atomic(&paths::thumb_path(data_dir, item.id, THUMB_GRID), &webp).map_err(|e| e.to_string())?;
     // A new grid thumbnail means the file changed: a cached preview is stale.
     let _ = std::fs::remove_file(paths::thumb_path(data_dir, item.id, THUMB_PREVIEW));
 
     // Reading a cloud-only file (explicit download) hydrates it: record the state it has now.
     let cloud = std::fs::symlink_metadata(&item.abs).map(|m| fa.cloud_state(&item.abs, &m)).unwrap_or(CloudState::Unknown);
-    Ok(Outcome::Ok { id: item.id, width: w as i64, height: h as i64, hash, dhash, phash, cloud })
+    Ok(Outcome::Ok { id: item.id, width: w as i64, height: h as i64, hash, dhash, phash, cloud, blur })
 }
 
 fn hash_i64(hasher: &image_hasher::Hasher, img: &image::DynamicImage) -> Option<i64> {

@@ -33,8 +33,16 @@ Subcommands (phase 1.2):
 
 Subcommands (phase 2.1, read-only):
   search <text> [--mode any|filename|ocr|semantic] [--limit N] [--cursor C]
-                                         full-text search, most relevant first; prints ImagePage
+                                         text search, most relevant first; prints ImagePage. `semantic`
+                                         starts the AI sidecar and waits for it; `any` never does (FTS only)
   journal [--limit N]                    undo journal batches, newest first; prints the list_journal result
+
+Subcommands (phase 3.2, AI sidecar from the sidecarVenv / aiDevice settings):
+  status                                 start the sidecar, wait until it settles; prints SidecarStatus
+  ai --tasks ocr,embed,classify,color [--images id,id,...] [--wait]
+                                         run the AI job to completion; prints the AI report
+  dupes --mode exact|similar [--hamming N] [--root <rootId>]
+                                         duplicate groups, best first; prints the find_duplicates result
 
 Global flags:
   --data-dir <path>   data dir (else SS_DATA_DIR, else D:\\IOT_Tools\\data\\ScreenshotStudio)
@@ -143,6 +151,40 @@ fn run(args: &mut Vec<String>) -> Result<Value, Failure> {
             q.include_missing = include_missing;
             json(open()?.query_images(&q)?)
         }
+        "status" => {
+            no_more(args)?;
+            let core = open()?;
+            core.start_sidecar()?;
+            let status = core.sidecar().wait_settled();
+            core.shutdown_sidecar();
+            json(status)
+        }
+        "ai" => {
+            let _wait = take_flag(args, "--wait"); // the CLI always waits: a background job would die with the process
+            let tasks = take_value(args, "--tasks")?.ok_or_else(|| usage("ai needs --tasks ocr,embed,classify,color"))?;
+            let tasks: Vec<AiTask> = tasks
+                .split(',')
+                .map(|t| serde_json::from_value(Value::String(t.trim().to_owned())).map_err(|_| usage(format!("unknown AI task `{t}`"))))
+                .collect::<Result<_, _>>()?;
+            let image_ids = take_value(args, "--images")?
+                .map(|v| v.split(',').map(|n| parse_int(n.trim(), "--images")).collect::<Result<Vec<i64>, _>>())
+                .transpose()?;
+            no_more(args)?;
+            let core = open()?;
+            core.start_sidecar()?;
+            let report = core.ai_blocking(StartAiReq { tasks, image_ids }, &StderrSink);
+            core.shutdown_sidecar();
+            json(report?)
+        }
+        "dupes" => {
+            let mode = take_value(args, "--mode")?.ok_or_else(|| usage("dupes needs --mode exact|similar"))?;
+            let mode: DuplicateMode = serde_json::from_value(Value::String(mode.clone()))
+                .map_err(|_| usage(format!("--mode must be exact|similar, got `{mode}`")))?;
+            let hamming = take_value(args, "--hamming")?.map(|v| parse_int(&v, "--hamming")).transpose()?;
+            let root_id = take_value(args, "--root")?.map(|v| parse_int(&v, "--root")).transpose()?;
+            no_more(args)?;
+            json(open()?.find_duplicates(FindDuplicatesReq { mode, hamming, root_id })?)
+        }
         "search" => {
             let mode = take_value(args, "--mode")?.unwrap_or_else(|| "any".into());
             let text_mode: TextMode = serde_json::from_value(Value::String(mode.clone()))
@@ -158,7 +200,14 @@ fn run(args: &mut Vec<String>) -> Result<Value, Failure> {
             q.text_mode = text_mode;
             q.sort = SortSpec { field: SortField::Relevance, dir: SortDir::Desc };
             q.cursor = cursor;
-            json(open()?.query_images(&q)?)
+            let core = open()?;
+            if text_mode == TextMode::Semantic {
+                core.start_sidecar()?;
+                core.sidecar().wait_settled();
+            }
+            let page = core.query_images(&q);
+            core.shutdown_sidecar();
+            json(page?)
         }
         "journal" => {
             let limit = take_value(args, "--limit")?.map(|v| parse_int(&v, "--limit")).transpose()?.unwrap_or(50);

@@ -4,7 +4,6 @@ use ss_core::contract::AppError;
 use ss_core::contract::ipc::*;
 use tauri::State;
 
-use super::not_implemented;
 use crate::state::{AppState, blocking};
 
 #[tauri::command]
@@ -32,6 +31,7 @@ pub async fn list_journal(req: LimitReq, state: State<'_, AppState>) -> Result<J
 }
 
 #[tauri::command]
-pub async fn get_stats() -> Result<Stats, AppError> {
-    not_implemented("get_stats", "3.2")
+pub async fn get_stats(state: State<'_, AppState>) -> Result<Stats, AppError> {
+    let core = state.core.clone();
+    blocking(move || core.get_stats()).await
 }

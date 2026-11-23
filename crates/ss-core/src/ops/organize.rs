@@ -32,12 +32,14 @@ pub(crate) fn json_param(v: &Json) -> Value {
 pub(crate) fn fts_set(tx: &Transaction<'_>, id: i64, column: &str, value: &str) -> Result<(), AppError> {
     let n = tx.execute(&format!("UPDATE text_fts SET {column} = ?2 WHERE rowid = ?1"), params![id, value])?;
     if n == 0 {
+        let ocr: Option<String> =
+            tx.query_row("SELECT text FROM ocr_result WHERE image_id = ?1", [id], |r| r.get(0)).optional()?;
         tx.execute(
             "INSERT INTO text_fts (rowid, file_name, ocr_text, note)
-             SELECT i.id, i.file_name, COALESCE(o.text, ''), COALESCE(i.note, '')
-             FROM image i LEFT JOIN ocr_result o ON o.image_id = i.id WHERE i.id = ?1",
-            [id],
+             SELECT i.id, i.file_name, ?2, COALESCE(i.note, '') FROM image i WHERE i.id = ?1",
+            params![id, crate::filter::fts_ocr_text(&ocr.unwrap_or_default())],
         )?;
+        tx.execute(&format!("UPDATE text_fts SET {column} = ?2 WHERE rowid = ?1"), params![id, value])?;
     }
     Ok(())
 }
@@ -382,7 +384,7 @@ pub fn save_smart_filter(caller: Caller, cat: &Catalog, req: SaveSmartFilterReq)
     let name = clean_name(&req.name, "smart filter")?;
     let mut query = req.query;
     query.cursor = None;
-    crate::filter::build(&query)?;
+    crate::filter::validate(&query)?;
     if !(1..=crate::query::LIMIT_MAX).contains(&query.limit) {
         return Err(invalid(format!("limit must be 1..{}, got {}", crate::query::LIMIT_MAX, query.limit)));
     }

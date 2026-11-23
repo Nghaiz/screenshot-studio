@@ -3,6 +3,29 @@
 Non-obvious gotchas found while building Screenshot Studio. Owner rule: lessons stay in this repo, nothing goes
 to a kit. Newest first. One entry: what happened, why, what to do.
 
+## 2026-11-24 — phase 3.2
+
+### A test double that dies in a worker thread hangs the test instead of failing it
+- **Seen:** two supervisor tests waited their full 30 s timeout with the sidecar stuck in `starting`. The fake
+  sidecar answered errors from a template loaded as `fixture("error.json")`, which looked for `error.json.json`; the
+  `FileNotFoundError` killed only the worker thread, so the request was never answered.
+- **Do:** a fake server catches every exception per request and answers it (`-32603 fake sidecar bug: ...`), so its
+  own bug fails the test at once with a readable message. Run the fake by hand once
+  (`(echo '<request>'; sleep 1) | python fake_sidecar.py`) when a supervisor test times out.
+
+### dHash fixtures: per-pixel noise has a fragile hash
+- **Why:** dHash compares the means of neighbouring cells of a 9x8 downscale. Over random pixels those means are
+  nearly equal, so a resize or JPEG re-encode flips bits at random.
+- **Do:** draw flat cells aligned to the 9x8 grid with >= 40 levels between horizontal neighbours, plus per-pixel grain
+  for sharpness (`smart_test.rs` `noise`). PNG vs a downscaled JPEG copy measured Hamming 0.
+
+### Small Rust/SQLite traps hit in this phase
+- Edition 2024 reserves `gen`: a field or variable named `gen` fails with dozens of parse errors that hide the real
+  ones. Name it `generation`.
+- SQLite has no `^` (XOR) operator; compute bit distances in Rust.
+- The sidecar rejects negative JSON-RPC ids (`is_request_id` needs >= 0): the supervisor's own `initialize` and
+  `shutdown` requests draw from the same positive counter as calls.
+
 ## 2026-11-24 — phase 3.1
 
 ### A stdin pipe read blocks DLL loading in other threads (Windows)
