@@ -121,22 +121,23 @@ async function waitHttp(url, timeoutMs, isDead) {
   throw new Error(`timeout after ${timeoutMs} ms waiting for ${url} (${last})`);
 }
 
-function killTree(pid) {
+export function killTree(pid) {
   if (pid) run("taskkill", ["/PID", String(pid), "/T", "/F"]);
 }
 
 /**
- * Starts the release exe with CDP enabled. `startedAt` is the epoch ms just before spawn (cold-start origin).
- * Resolves once the CDP endpoint answers; `stop()` kills the app's process tree (WebView2 children included).
+ * Starts the app with CDP enabled: the release exe, or `exe` (e.g. the installed copy, phase 2.3; cwd = its dir).
+ * `startedAt` is the epoch ms just before spawn (cold-start origin). Resolves once the CDP endpoint answers;
+ * `stop()` kills the app's process tree (WebView2 children included).
  */
-export async function startApp({ dataDir, cdpPort = CDP_PORT, timeoutMs = 60_000 } = {}) {
-  if (!existsSync(APP_EXE)) throw new Error(`${APP_EXE} missing: build it first`);
+export async function startApp({ dataDir, cdpPort = CDP_PORT, timeoutMs = 60_000, exe = APP_EXE } = {}) {
+  if (!existsSync(exe)) throw new Error(`${exe} missing: build it first`);
   const env = childEnv({
     SS_DATA_DIR: dataDir,
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: [`--remote-debugging-port=${cdpPort}`, ...WEBVIEW_FLAGS].join(" "),
   });
   const startedAt = Date.now();
-  const proc = spawn(APP_EXE, [], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"] });
+  const proc = spawn(exe, [], { cwd: exe === APP_EXE ? ROOT : path.dirname(exe), env, stdio: ["ignore", "pipe", "pipe"] });
   let log = "";
   proc.stdout.on("data", (d) => (log += d));
   proc.stderr.on("data", (d) => (log += d));
@@ -153,10 +154,15 @@ export async function startApp({ dataDir, cdpPort = CDP_PORT, timeoutMs = 60_000
 
 /**
  * Memory of a process and all its descendants (the app + its WebView2 browser, GPU and renderer processes):
- * { processes, workingSetMB, privateMB } from Win32_Process (WorkingSetSize, PrivatePageCount, in bytes).
+ * { processes, workingSetMB, privateMB, names } from Win32_Process (WorkingSetSize, PrivatePageCount, in bytes).
+ * A child must have started after its parent: Windows reuses PIDs and never updates ParentProcessId, so an older
+ * process whose dead parent's PID now belongs to one of ours is not ours (phase 2.3 counted a foreign 24 MB
+ * `NhNotifSys.exe` under the WebView2 crashpad handler that way).
  */
 export function treeMemory(rootPid) {
-  const ps = "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,WorkingSetSize,PrivatePageCount | ConvertTo-Json -Compress";
+  const ps =
+    "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize,PrivatePageCount," +
+    "@{n='Created';e={ if ($_.CreationDate) { ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds() } else { 0 } }} | ConvertTo-Json -Compress";
   const r = run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps]);
   if (r.error || r.status !== 0) throw new Error(`Win32_Process query failed: ${r.error?.message ?? r.out.slice(-300)}`);
   const rows = JSON.parse(r.stdout);
@@ -167,8 +173,9 @@ export function treeMemory(rootPid) {
   while (stack.length) {
     const p = stack.pop();
     tree.push(p);
-    stack.push(...(kids.get(p.ProcessId) ?? []).filter((c) => c.ProcessId !== p.ProcessId));
+    stack.push(...(kids.get(p.ProcessId) ?? []).filter((c) => c.ProcessId !== p.ProcessId && Number(c.Created) >= Number(p.Created)));
   }
   const mb = (k) => Math.round(tree.reduce((a, p) => a + Number(p[k] ?? 0), 0) / 1048576);
-  return { processes: tree.length, workingSetMB: mb("WorkingSetSize"), privateMB: mb("PrivatePageCount") };
+  const names = [...new Set(tree.map((p) => p.Name))].sort().join(",");
+  return { processes: tree.length, workingSetMB: mb("WorkingSetSize"), privateMB: mb("PrivatePageCount"), names };
 }

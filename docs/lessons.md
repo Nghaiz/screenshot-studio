@@ -3,6 +3,93 @@
 Non-obvious gotchas found while building Screenshot Studio. Owner rule: lessons stay in this repo, nothing goes
 to a kit. Newest first. One entry: what happened, why, what to do.
 
+## 2026-11-24 — phase 2.3
+
+### Browsing the whole real library costs ~720 MB: Chromium keeps ~2,000 decoded thumbnails
+- **Seen:** `p2.mjs` `memory`: 723-748 MB (app + WebView2 private) after paging screen by screen through the real
+  library (5,662 loadable 320 px thumbnails), against the 500 MB budget. A 10 s top-to-bottom scroll (the 1.4
+  measurement) ends at 476-489 MB, because rows that fly past never load (2.2's settle delay).
+- **Why (memory-infra dump over CDP `Tracing.requestMemoryDump`):** the renderer's compositor image decode cache
+  (`cc/image_memory`) held 436 MB after ~1,800 thumbnails and does not shrink on GC or a simulated critical
+  memory-pressure signal. It caps by entry COUNT (~2,000), so memory = 2,000 x decoded size (320x180x4 = 230 KB).
+  On top sits a fixed WebView2 cost of 380-417 MB at the first screen, of which the GPU process alone is 230-300 MB
+  (NVIDIA RTX 4060 Laptop, the only adapter; most of it is driver memory Chromium does not track).
+- **2.2 missed it** because its 6,300 fixture PNGs are 96-160 px: their decoded thumbnails are tiny.
+- **Tried, measured, not kept:** `--force-gpu-mem-discardable-limit-mb=32` and `--force-gpu-mem-available-mb=96`:
+  no change. `--disable-gpu-rasterization`: GPU process -140 MB, grid p50 4.2 -> 12.6 ms. `--disable-gpu`: 433 MB
+  but 9 fps. `--enable-low-end-device-mode`: decode cache halved (218 MB), total still ~560 MB, broad side effects.
+  Grid thumbnails as canvases: an unaccelerated canvas is painted into the grid's tiles as an image (615 MB of
+  decode cache, worse); `drawImage(bitmap)` on an accelerated canvas fills the GPU transfer cache (256 MB);
+  `putImageData` into an accelerated canvas (CORS read of `ssimg`) removed `cc/image_memory` entirely, but the
+  renderer still ended at ~290 MB after GC (allocator high-water) and the total at 703 MB, within noise of `<img>`.
+- **Do:** treat the 500 MB budget as an owner decision (the fixed WebView2 cost leaves ~100 MB of headroom on this
+  machine). Measure memory on the real library, never on small fixtures. `memory-infra` dumps name the owner of the
+  bytes; private-bytes totals alone do not.
+
+### Second pass: Chromium purges on idle, Blink keeps every encoded thumbnail, and WebView2's LOW target barely helps
+- **Idle purge (measured, no flags):** after visiting every thumbnail the tree falls from 751 to 596 MB within ~8 s
+  of no input, by itself. The first pass sampled right after the last screen, so it saw the peak only. `p2.mjs` now
+  samples for 10 s after each scroll and prints the peak and the after-idle value.
+- **What stays (dump after idle, after 2 forced GCs, after a simulated critical pressure signal; unchanged by all
+  three):** renderer `partition_alloc` allocated objects 214 MB. 5,662 grid thumbnails on disk average 33.6 KB
+  (186 MB in total), so Blink keeps the ENCODED bytes of every thumbnail it has shown. Only 27 `<img>` elements were
+  alive, all in the DOM (CDP `Runtime.queryObjects`), so neither React nor detached nodes hold them. `cc/image_memory`
+  read 456 MB through all of it while private bytes fell, so most of what it reports is not process private memory.
+- **`ICoreWebView2_19::SetMemoryUsageTargetLevel` (LOW), tried (webview2-com 0.39.1 + windows-core 0.62.2, the
+  versions Tauri links; `with_webview` -> `controller().CoreWebView2()?.cast::<ICoreWebView2_19>()`):** LOW held from
+  start: first screen 323-333 MB vs 376-381 MB, visit-all + idle 555 MB vs 596 MB; a 3 s LOW pulse during idle: the
+  same 555 MB. The ~40-50 MB comes off the GPU process only; the renderer's 214 MB stays. Fast scroll and its p95
+  (4.3 ms) did not change. Microsoft advises LOW for an inactive app, the only way it paid here was holding it on the
+  visible window, and it never got visit-all near 500 MB, so it was reverted (no new direct dependency).
+- **Do:** the remaining levers are the encoded size (#29 estimated 7.3 KB per 320 px thumbnail from 60 samples;
+  the real library averages 33.6 KB, 4.6x more) or loading thumbnails some way Blink does not retain. Both are
+  later-phase decisions; `p2.mjs` gates the plan's literal whole-library scroll (Deferred decision #31).
+
+### Square grid cells cropped and upscaled every thumbnail (`object-fit: cover`)
+- **Seen (real library, CDP, devicePixelRatio 1.5 on this laptop):** Grid at slider 320: cells 322 px square, median
+  on-screen scale 5.0 physical px per thumbnail px (wide screenshots: their middle cropped and blown up); at 400:
+  8.9. Masonry (box = image aspect): 1.5 at 320, which is the DPR alone. List: 0.6.
+- **Do:** square cells (Grid, Timeline) use `contain` over the cell surface (`.ss-square`, `src/index.css`). With it
+  the Grid's median is 0.89x at the owner's saved size 180, 1.51x at 320 (the DPR alone), 2.29x at 400. Sharper
+  than that at 320-400 needs a bigger thumbnail; the 1280 preview (204 KB encoded) in the grid would multiply the
+  retained encoded bytes above ~6x, so it was not used (Deferred decision #32).
+- **It costs memory:** A/B on one build, the old rule injected over CDP (`addStyleTag`), 2 runs each: gated scroll
+  peak 500/500 MB with `contain` vs 476/482 MB with `cover`; visit-all peak 798/795 vs 741/741 MB. Measure a CSS
+  change to image display against the memory gate before shipping it; an A/B over CDP needs no rebuild.
+
+### Windows Search finds the installed app (step 6, checked by the orchestrator with cua-driver, 2026-11-24 ~02:40)
+- Win+S, typed `Screenshot Studio`: "Best match: Screenshot Studio, App" with the new icon (top result, web
+  suggestions below). Enter launched it; `list_windows` showed `screenshot-studio.exe` with the window
+  "Screenshot Studio" and the single-instance helper window `dev.nghaiz.screenshotstudio-siw`; `verify_state`
+  (window exists) satisfied; closed with the UIA Close button. `p2.mjs` `start-menu` stays the automated proxy.
+
+### A silent NSIS install writes a Desktop shortcut, and this Desktop is in OneDrive
+- **Seen:** Tauri's installer.nsi (tauri-bundler 2.10) creates `$DESKTOP\<product>.lnk` on every `/S` or `/P` install;
+  `/NS` drops the Start Menu shortcut too. `[Environment]::GetFolderPath('Desktop')` is `C:\Users\Nghaiz\OneDrive\Desktop`.
+- **Do:** `src-tauri/windows/installer-hooks.nsh` forces no-shortcut mode in PREINSTALL and creates only the Start
+  Menu shortcut in POSTINSTALL. `p2.mjs` `no-desktop-lnk` fails if one appears.
+
+### The installed exe is not byte-identical to target\release
+- **Seen:** 3 bytes differ. The bundler stamps `__TAURI_BUNDLE_TYPE_VAR_NSS` into the copy it packs and restores
+  `__TAURI_BUNDLE_TYPE_VAR_UNK` in `target\release\screenshot-studio.exe` afterwards.
+- **Do:** compare after normalizing that one marker (`p2.mjs` `installed-exe`).
+
+### Windows reuses PIDs: a process tree from ParentProcessId can include strangers
+- **Seen:** `treeMemory` counted a 24 MB `NhNotifSys.exe` (started at 00:15, over an hour before the app) under the
+  WebView2 crashpad handler, whose PID had once belonged to its real, dead parent.
+- **Do:** a child must have started after its parent (`run.mjs` `treeMemory` compares CreationDate).
+
+### WebView2 data and the main window
+- Tauri puts the WebView2 profile in `%LOCALAPPDATA%\<identifier>\EBWebView` unless the window builder gets
+  `data_directory`, and a config window cannot take an absolute one: the main window is `create: false` and built in
+  `setup` (`src-tauri/src/window.rs`). WebView2 appends `EBWebView` to the folder you give it.
+- The old profile was moved once with `robocopy /E /MOVE` so the UI's `localStorage` (theme, density) survived.
+- `/D=` works with `installMode: currentUser`; `cargo tauri build` writes to the workspace `target\`, not `src-tauri\target\`.
+
+### Icon rendering needs a matching Playwright browser
+- Playwright 1.65.1 wants Chromium revision 1255; this machine has 1254, and Edge's `msedge.exe` is absent (only
+  WebView2 parts). `src-tauri/icons/source/render.mjs` takes `SS_CHROMIUM=<chrome.exe>` for another build.
+
 ## 2026-11-23 — phase 2.1
 
 ### FTS5 `remove_diacritics` does not fold `đ` / `Đ`
