@@ -1,10 +1,22 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
 import "./index.css";
+import { createQueryClient, Root } from "./Root";
+import { usePrefs } from "./state/prefs";
+import { applyAppearance } from "./themes";
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+async function start() {
+  // `VITE_MOCK_IPC=1 npm run dev` runs the UI in a plain browser against 10,000 generated images.
+  if (import.meta.env.VITE_MOCK_IPC) {
+    const { installMockIpc } = await import("./mocks/ipc");
+    installMockIpc({ firstRun: import.meta.env.VITE_MOCK_FIRST_RUN === "1" });
+  }
+  applyAppearance(usePrefs.getState());
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <Root client={createQueryClient()} />
+    </React.StrictMode>,
+  );
+}
+
+void start();

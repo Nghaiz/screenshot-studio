@@ -1,0 +1,18 @@
+/* Theme `fluent-mica-light`: Windows 11 Mica feel, soft tinted light, calm motion. */
+[data-theme="fluent-mica-light"] {
+  --ss-bg:
+    radial-gradient(60rem 40rem at 0% 0%, rgb(186 214 255 / 0.70), transparent 60%),
+    radial-gradient(50rem 36rem at 100% 100%, rgb(236 220 255 / 0.70), transparent 60%),
+    #eef1f6;
+  --ss-surface: rgb(255 255 255 / 0.62);
+  --ss-surface-blur: 30px;
+  --ss-text: #1b1d22;
+  --ss-muted: #5d6470;
+  --ss-accent: #0067c0;
+  --ss-accent-contrast: #ffffff;
+  --ss-border: rgb(0 0 0 / 0.08);
+  --ss-radius: 8px;
+  --ss-shadow: 0 8px 24px rgb(15 23 42 / 0.10);
+  --ss-motion-scale: 0.9;
+  color-scheme: light;
+}

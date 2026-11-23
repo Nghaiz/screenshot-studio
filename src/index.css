@@ -1,11 +1,23 @@
 @import "tailwindcss";
-@import "./themes/aurora-glass.css";
+
+/* Theme files are imported by src/themes/index.ts. Everything below reads only --ss-* variables. */
+
+:root {
+  --ss-motion-intensity: 1;
+  --ss-motion: calc(var(--ss-motion-scale, 1) * var(--ss-motion-intensity));
+  --ss-gap: 10px;
+  --ss-dur: calc(180ms * var(--ss-motion));
+}
+[data-density="compact"] { --ss-gap: 4px; }
+[data-density="spacious"] { --ss-gap: 18px; }
+[data-motion="off"] { --ss-motion-intensity: 0; }
 
 html,
 body,
 #root {
   height: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 body {
@@ -14,3 +26,91 @@ body {
   color: var(--ss-text);
   font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
 }
+
+/* Chrome panels only: backdrop-filter is never used per thumbnail (phase 1.3 risk table). */
+.ss-panel {
+  background: var(--ss-surface);
+  backdrop-filter: blur(var(--ss-surface-blur));
+  border: 1px solid var(--ss-border);
+  border-radius: var(--ss-radius);
+  box-shadow: var(--ss-shadow);
+}
+.ss-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: calc(var(--ss-radius) * 0.6);
+  border: 1px solid var(--ss-border);
+  background: transparent;
+  color: var(--ss-text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--ss-dur), border-color var(--ss-dur);
+}
+.ss-btn:hover { border-color: var(--ss-accent); }
+.ss-btn[aria-pressed="true"],
+.ss-btn-primary {
+  background: var(--ss-accent);
+  color: var(--ss-accent-contrast);
+  border-color: var(--ss-accent);
+}
+.ss-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.ss-input {
+  padding: 4px 10px;
+  border-radius: calc(var(--ss-radius) * 0.6);
+  border: 1px solid var(--ss-border);
+  background: transparent;
+  color: var(--ss-text);
+  font-size: 13px;
+}
+.ss-input:focus-visible,
+.ss-btn:focus-visible { outline: 2px solid var(--ss-accent); outline-offset: 1px; }
+.ss-muted { color: var(--ss-muted); }
+
+.ss-cell {
+  position: relative;
+  overflow: hidden;
+  border-radius: calc(var(--ss-radius) * 0.5);
+  background: color-mix(in srgb, var(--ss-text) 6%, transparent);
+  outline: none;
+  transition: transform var(--ss-dur), box-shadow var(--ss-dur);
+}
+.ss-cell:hover { transform: translateY(calc(-2px * var(--ss-motion-intensity))); }
+.ss-cell[aria-selected="true"] { box-shadow: 0 0 0 3px var(--ss-accent); }
+.ss-cell:focus-visible,
+.ss-cell[data-focused="true"] { box-shadow: 0 0 0 2px var(--ss-text), 0 0 0 4px var(--ss-accent); }
+.ss-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.ss-shimmer {
+  background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--ss-text) 10%, transparent) 50%, transparent 80%);
+  background-size: 200% 100%;
+  animation: ss-shimmer calc(1.4s / max(var(--ss-motion), 0.001)) linear infinite;
+}
+[data-motion="off"] .ss-shimmer { animation: none; }
+@keyframes ss-shimmer { to { background-position: -200% 0; } }
+
+/* Animated background: one fixed layer of three soft blobs (toggle in settings). */
+.ss-blob {
+  position: absolute;
+  width: 46vmax;
+  height: 46vmax;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.35;
+  will-change: transform;
+  animation: ss-drift calc(28s / max(var(--ss-motion), 0.001)) ease-in-out infinite alternate;
+}
+@keyframes ss-drift {
+  from { transform: translate(-8%, -6%) scale(1); }
+  to { transform: translate(10%, 8%) scale(1.15); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --ss-motion-intensity: 0 !important; }
+  .ss-blob, .ss-shimmer { animation: none; }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ss-text) 22%, transparent); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }

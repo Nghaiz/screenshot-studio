@@ -1,0 +1,18 @@
+/* Theme `forest`: moss and pine greens, solid-ish panels, grounded motion. */
+[data-theme="forest"] {
+  --ss-bg:
+    radial-gradient(50rem 34rem at 0% 100%, rgb(132 204 22 / 0.22), transparent 60%),
+    radial-gradient(46rem 30rem at 100% 0%, rgb(20 184 166 / 0.20), transparent 60%),
+    linear-gradient(170deg, #0b1a10 0%, #10261a 60%, #08130c 100%);
+  --ss-surface: rgb(16 38 24 / 0.72);
+  --ss-surface-blur: 12px;
+  --ss-text: #eaf5e4;
+  --ss-muted: #9db79a;
+  --ss-accent: #a3e635;
+  --ss-accent-contrast: #132003;
+  --ss-border: rgb(163 230 53 / 0.18);
+  --ss-radius: 12px;
+  --ss-shadow: 0 16px 44px rgb(0 0 0 / 0.40);
+  --ss-motion-scale: 1;
+  color-scheme: dark;
+}

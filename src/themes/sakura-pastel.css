@@ -1,0 +1,19 @@
+/* Theme `sakura-pastel`: pale pink and lilac, very round, floaty slow motion. */
+[data-theme="sakura-pastel"] {
+  --ss-bg:
+    radial-gradient(40rem 30rem at 15% 10%, rgb(255 199 221 / 0.85), transparent 60%),
+    radial-gradient(44rem 32rem at 90% 30%, rgb(221 214 254 / 0.80), transparent 60%),
+    radial-gradient(50rem 30rem at 50% 110%, rgb(254 240 199 / 0.75), transparent 60%),
+    #fff6f9;
+  --ss-surface: rgb(255 255 255 / 0.58);
+  --ss-surface-blur: 22px;
+  --ss-text: #4a2a3a;
+  --ss-muted: #8f6a7d;
+  --ss-accent: #e86a92;
+  --ss-accent-contrast: #ffffff;
+  --ss-border: rgb(232 106 146 / 0.22);
+  --ss-radius: 22px;
+  --ss-shadow: 0 14px 40px rgb(232 106 146 / 0.18);
+  --ss-motion-scale: 1.25;
+  color-scheme: light;
+}
