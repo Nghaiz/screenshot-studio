@@ -6,7 +6,7 @@ use ss_core::contract::ipc::*;
 use ss_core::contract::{AppError, Caller};
 use tauri::{AppHandle, State};
 
-use super::not_implemented;
+use crate::live;
 use crate::state::{AppState, TauriSink, blocking};
 
 #[tauri::command]
@@ -50,10 +50,30 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<SettingsMap, App
     blocking(move || core.get_settings()).await
 }
 
+/// Stores a setting. `autostart` is applied through the plugin first (a failure stores nothing); a new
+/// `hotkey` must parse and is re-registered after it is stored (a taken key is a warning, not an error).
 #[tauri::command]
-pub async fn set_setting(req: SetSettingReq, state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn set_setting(req: SetSettingReq, state: State<'_, AppState>, app: AppHandle) -> Result<(), AppError> {
+    match req.key {
+        SettingKey::Autostart => {
+            let on = req.value.as_bool().ok_or_else(|| {
+                AppError::new(ss_core::contract::ErrorKind::InvalidArgument, "autostart must be true or false")
+            })?;
+            live::apply_autostart(&app, on)?;
+        }
+        SettingKey::Hotkey => {
+            live::parse_hotkey(req.value.as_str().unwrap_or_default())?;
+        }
+        _ => {}
+    }
+    let hotkey = (req.key == SettingKey::Hotkey).then(|| req.value.as_str().unwrap_or_default().to_owned());
     let core = state.core.clone();
-    blocking(move || core.set_setting(Caller::Ui, req)).await
+    blocking(move || core.set_setting(Caller::Ui, req)).await?;
+    if let Some(h) = hotkey {
+        live::apply_hotkey(&app, &h);
+    }
+    crate::tray::refresh(&app, true);
+    Ok(())
 }
 
 #[tauri::command]
@@ -63,7 +83,7 @@ pub async fn get_counts(state: State<'_, AppState>) -> Result<CatalogCounts, App
 }
 
 #[tauri::command]
-pub async fn get_recent(req: LimitReq) -> Result<Vec<ImageSummary>, AppError> {
-    let _ = req;
-    not_implemented("get_recent", "4.1")
+pub async fn get_recent(req: LimitReq, state: State<'_, AppState>) -> Result<Vec<ImageSummary>, AppError> {
+    let core = state.core.clone();
+    blocking(move || core.get_recent(req)).await
 }

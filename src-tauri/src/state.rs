@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use ss_core::AppCore;
-use ss_core::contract::ipc::{JobProgress, LibraryChangeReason, LibraryChanged, OpResult, events};
+use ss_core::contract::ipc::{JobProgress, LibraryChangeReason, LibraryChanged, NewScreenshot, OpResult, events};
 use ss_core::contract::{AppError, ErrorKind};
 use ss_core::jobs::EventSink;
 use ss_core::ssimg::SsimgResponse;
@@ -29,6 +29,20 @@ impl EventSink for TauriSink {
         if let Err(e) = self.app.emit(events::LIBRARY_CHANGED, c) {
             eprintln!("screenshot-studio: emit {}: {e}", events::LIBRARY_CHANGED);
         }
+        if c.reason != LibraryChangeReason::Indexed {
+            crate::tray::refresh(&self.app, false);
+        }
+    }
+
+    /// One `new-screenshot` per file, one toast for the batch, then the tray's Recent menu.
+    fn new_screenshots(&self, items: &[NewScreenshot]) {
+        for n in items {
+            if let Err(e) = self.app.emit(events::NEW_SCREENSHOT, n) {
+                eprintln!("screenshot-studio: emit {}: {e}", events::NEW_SCREENSHOT);
+            }
+        }
+        crate::live::toast_new(&self.app, items);
+        crate::tray::refresh(&self.app, true);
     }
 }
 

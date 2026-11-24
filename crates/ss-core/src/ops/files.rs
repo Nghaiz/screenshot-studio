@@ -68,7 +68,7 @@ pub(crate) fn check_file_name(name: &str) -> Result<(), AppError> {
 }
 
 /// Lower-case names the catalog holds in one folder of a root.
-fn catalog_names(cat: &Catalog, root_id: i64, folder: &str) -> Result<HashSet<String>, AppError> {
+pub(crate) fn catalog_names(cat: &Catalog, root_id: i64, folder: &str) -> Result<HashSet<String>, AppError> {
     let folder = folder.to_owned();
     cat.read(move |c| {
         let mut stmt = c.prepare("SELECT file_name FROM image WHERE root_id = ?1 AND folder = ?2")?;
@@ -77,7 +77,7 @@ fn catalog_names(cat: &Catalog, root_id: i64, folder: &str) -> Result<HashSet<St
     })
 }
 
-fn split_ext(name: &str) -> (&str, &str) {
+pub(crate) fn split_ext(name: &str) -> (&str, &str) {
     match name.rfind('.') {
         Some(i) if i > 0 => (&name[..i], &name[i + 1..]),
         _ => (name, ""),

@@ -6,13 +6,14 @@
 //! - [`files`]: move/copy, rename + preview, in-app trash/restore, Recycle Bin (phase 2.1);
 //! - [`purge`]: the two-step permanent delete (D8, phase 2.1);
 //! - [`journal`]: the `op_journal` batches, `list_journal` and `undo` (phase 2.1);
-//! - edit/convert/stitch are phase 4.1 stubs below.
+//! - [`edit`]: edit save, convert, stitch with backup + undo (phase 4.1).
 //!
 //! Order of every journaled file mutation: file op first, then ONE SQLite transaction holding the row
 //! changes and the `op_journal` batch; a file op whose DB step fails is reversed.
 
+pub mod edit;
 pub mod files;
-mod fsio;
+pub(crate) mod fsio;
 pub mod journal;
 pub mod organize;
 mod pattern;
@@ -23,6 +24,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, params_from_iter};
+
+pub use edit::{CropRect, EditOutcome, SaveEditedImage};
 
 use crate::catalog::{self, Catalog};
 use crate::contract::ipc::*;
@@ -228,35 +231,4 @@ pub(crate) fn guard_file_write(caller: Caller, roots: &[LibraryRoot], paths_touc
         }
     }
     Ok(())
-}
-
-// ---------------------------------------------------------------------------------------------
-// Phase 4.1 stubs
-// ---------------------------------------------------------------------------------------------
-
-/// Decoded `save_edited_image` request (raw PNG body + `x-*` headers).
-#[derive(Debug, Clone)]
-pub struct SaveEditedImage {
-    pub image_id: i64,
-    pub mode: EditMode,
-    pub format: ImageFormat,
-    pub quality: Option<i64>,
-    pub png: Vec<u8>,
-}
-
-macro_rules! write_stubs {
-    ($($(#[$doc:meta])* $phase:literal $name:ident($req:ty) -> $res:ty;)*) => {$(
-        $(#[$doc])*
-        #[doc = concat!("Implemented in phase ", $phase, ".")]
-        pub fn $name(caller: Caller, req: $req) -> Result<$res, AppError> {
-            let _ = (caller, req);
-            Err(AppError::not_implemented().with_detail(concat!("ss_core::ops::", stringify!($name), " lands in phase ", $phase)))
-        }
-    )*};
-}
-
-write_stubs! {
-    "4.1" save_edited_image(SaveEditedImage) -> ImageSummary;
-    "4.1" convert_images(ConvertImagesReq) -> OpResult;
-    "4.1" stitch_images(StitchImagesReq) -> ImageSummary;
 }
