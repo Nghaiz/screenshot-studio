@@ -2,6 +2,7 @@
 // 3.3 risks), as stat tiles and hand-drawn SVG charts (charts.tsx).
 import type { CountBy } from "@bindings/CountBy";
 import { formatBytes } from "../../components/Cell";
+import { ViewLoading } from "../../components/ViewLoading";
 import { useStats } from "../../data/library";
 import { useT, type Translate } from "../../i18n";
 import { categoryName } from "../../lib/categories";
@@ -31,7 +32,7 @@ export default function StatsDashboard() {
   const q = useStats();
   const num = (n: number) => n.toLocaleString(lang);
 
-  if (q.isPending) return <div className="ss-panel ss-shimmer min-h-0 flex-1" aria-busy="true" />;
+  if (q.isPending) return <ViewLoading panel label={t("stats.loading")} />;
   if (q.isError) {
     return <p className="ss-panel m-0 p-4 text-sm" role="alert">{t("stats.failed", { message: toAppError(q.error).message })}</p>;
   }

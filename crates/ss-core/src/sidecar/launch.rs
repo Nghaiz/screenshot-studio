@@ -17,6 +17,8 @@ pub const SCHEMA_REL: &str = "contracts/sidecar-jsonrpc.schema.json";
 pub const PACKAGE_DIR: &str = "ss_sidecar";
 /// `python -m <module>`.
 pub const MODULE: &str = "ss_sidecar";
+/// Python's bytecode-cache root: every `.pyc` goes under it instead of a `__pycache__` next to its source.
+pub const PYCACHE_PREFIX_ENV: &str = "PYTHONPYCACHEPREFIX";
 
 /// Windows `CREATE_NO_WINDOW`: the app is a GUI process; a console child must not open a console window.
 #[cfg(windows)]
@@ -97,8 +99,13 @@ pub fn venv_from_setting(value: &serde_json::Value) -> PathBuf {
     }
 }
 
-/// The real sidecar launch, or the reason it is absent.
-pub fn plan(venv: &Path, layout: Option<&SidecarLayout>, init: InitializeParams) -> LaunchPlan {
+/// The real sidecar launch, or the reason it is absent. `pycache` is where Python keeps the bytecode it
+/// compiles ([`PYCACHE_PREFIX_ENV`]; the app passes [`crate::paths::sidecar_pycache_dir`]): without it
+/// the bundled app's first start wrote `__pycache__` into `<install dir>\sidecar`, which the uninstaller
+/// does not remove. Measured (phase 3.4b, `--selftest` on CUDA): 13.2 s with the venv's own caches, 40.1 s
+/// on the first start into an empty prefix (3,162 `.pyc`, 78 MB: the venv's and the standard library's
+/// caches are not shared with it), 13.4 s on every start after.
+pub fn plan(venv: &Path, layout: Option<&SidecarLayout>, init: InitializeParams, pycache: &Path) -> LaunchPlan {
     let python = venv_python(venv);
     if !python.is_file() {
         return LaunchPlan::Absent(format!(
@@ -122,6 +129,7 @@ pub fn plan(venv: &Path, layout: Option<&SidecarLayout>, init: InitializeParams)
             ("PYTHONUTF8".into(), "1".into()),
             ("PYTHONUNBUFFERED".into(), "1".into()),
             (CONTRACT_SCHEMA_ENV.into(), layout.schema.clone().into_os_string()),
+            (PYCACHE_PREFIX_ENV.into(), pycache.as_os_str().to_owned()),
         ],
     };
     LaunchPlan::Spawn(Box::new(SpawnSpec { launch, init }))
@@ -147,5 +155,43 @@ pub(crate) fn kill_tree(pid: u32) {
     #[cfg(not(windows))]
     {
         let _ = pid; // the child itself is killed through tokio's `start_kill`
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contract::ipc::AiDevice;
+    use crate::contract::sidecar::{OcrEngine, PROTOCOL_VERSION};
+
+    fn init() -> InitializeParams {
+        InitializeParams {
+            protocol_version: PROTOCOL_VERSION,
+            device: AiDevice::Auto,
+            languages: vec!["vi".into()],
+            embed_model: "m".into(),
+            ocr_engine: OcrEngine::Rapidocr,
+        }
+    }
+
+    #[test]
+    fn spawn_sends_python_bytecode_to_the_data_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let venv = tmp.path().join("venv");
+        std::fs::create_dir_all(venv_python(&venv).parent().unwrap()).unwrap();
+        std::fs::write(venv_python(&venv), b"").unwrap();
+        let root = tmp.path().join("install");
+        std::fs::create_dir_all(root.join("sidecar").join(PACKAGE_DIR)).unwrap();
+        let data = tmp.path().join("data");
+        let pycache = crate::paths::sidecar_pycache_dir(&data);
+        let LaunchPlan::Spawn(spec) = plan(&venv, Some(&SidecarLayout::under(&root)), init(), &pycache) else {
+            panic!("expected a spawn plan");
+        };
+        let env: Vec<(String, String)> =
+            spec.launch.env.iter().map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned())).collect();
+        let prefix: Vec<&String> = env.iter().filter(|(k, _)| k == PYCACHE_PREFIX_ENV).map(|(_, v)| v).collect();
+        assert_eq!(prefix, [&data.join("sidecar-pycache").to_string_lossy().into_owned()], "{env:?}");
+        assert!(!prefix[0].starts_with(&*root.to_string_lossy()), "never under the install dir");
+        assert_eq!(spec.launch.cwd, root.join("sidecar"));
     }
 }

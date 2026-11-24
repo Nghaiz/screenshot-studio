@@ -14,6 +14,7 @@ use crate::contract::{AppError, ErrorKind};
 use crate::errors::{internal, invalid};
 use crate::filter::SemanticScores;
 use crate::jobs::EventSink;
+use crate::paths;
 use crate::query;
 use crate::sidecar::config::{
     DETECT_PII_TIMEOUT_S, EMBED_MODEL, LANGUAGES, SEMANTIC_ANY_MIN_SCORE, SEMANTIC_ANY_TOP_K, SEMANTIC_ONLY_TIMEOUT_MS,
@@ -79,7 +80,7 @@ impl AppCore {
         }
         let venv = launch::venv_from_setting(&self.setting(SettingKey::SidecarVenv)?);
         let layout = self.sidecar_layout.lock().expect("sidecar layout").clone().or_else(SidecarLayout::detect);
-        Ok(launch::plan(&venv, layout.as_ref(), init))
+        Ok(launch::plan(&venv, layout.as_ref(), init, &paths::sidecar_pycache_dir(self.data_dir())))
     }
 
     fn setting(&self, key: SettingKey) -> Result<serde_json::Value, AppError> {

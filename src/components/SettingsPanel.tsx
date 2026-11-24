@@ -1,13 +1,14 @@
 // Settings panel, two tabs. Appearance (all stored in localStorage, D9): theme, accent, motion, animated background,
-// density, language. AI (phase 3.3): sidecar status, device, setup commands, "Run AI on library"; lazy-loaded, so it
-// costs nothing until opened.
-import { lazy, Suspense, type ReactNode } from "react";
+// density, language. AI (phase 3.3): sidecar status, device, setup commands, "Run AI on library"; mounted only while
+// its tab is open. Imported eagerly: a lazy chunk opened the tab on a Suspense fallback for >= 300 ms (phase 3.4b,
+// src/views/ToolView.tsx).
+import type { ReactNode } from "react";
 import { LANGUAGES, useT } from "../i18n";
 import { usePrefs } from "../state/prefs";
 import { useView, type SettingsTab } from "../state/view";
 import { DENSITIES, MOTION_LEVELS, prefersReducedMotion, THEME_IDS } from "../themes";
+import AiSettings from "./settings/AiSettings";
 
-const AiSettings = lazy(() => import("./settings/AiSettings"));
 const TABS: { id: SettingsTab; key: "settings.tabAppearance" | "settings.tabAi" }[] = [
   { id: "appearance", key: "settings.tabAppearance" },
   { id: "ai", key: "settings.tabAi" },
@@ -47,13 +48,7 @@ function SettingsBody() {
         ))}
       </div>
       <div role="tabpanel" id="ss-settings-tabpanel" aria-labelledby={`ss-settings-tab-${tab}`} className="flex flex-col gap-4">
-        {tab === "ai" ? (
-          <Suspense fallback={<div className="ss-shimmer h-24 w-full rounded" aria-busy="true" />}>
-            <AiSettings />
-          </Suspense>
-        ) : (
-          <Appearance />
-        )}
+        {tab === "ai" ? <AiSettings /> : <Appearance />}
       </div>
     </div>
   );

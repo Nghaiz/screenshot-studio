@@ -6,6 +6,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import type { DuplicateGroup } from "@bindings/DuplicateGroup";
 import type { DuplicateMode } from "@bindings/DuplicateMode";
 import { trashCopies } from "../../actions/smart";
+import { ViewLoading } from "../../components/ViewLoading";
 import { useDuplicates, useNumberSetting } from "../../data/smart";
 import { useT } from "../../i18n";
 import { DUP_HAMMING_DEFAULT, DUP_HAMMING_MAX, DUP_SLIDER_DEBOUNCE_MS, SMART_THUMB_PX } from "../../lib/defaults";
@@ -89,7 +90,7 @@ export default function DuplicatesView() {
       </div>
       <p className="ss-muted m-0 text-xs">{t("dup.safety")}</p>
       {q.isPending ? (
-        <p className="ss-muted m-0" aria-busy="true">{t("dup.loading")}</p>
+        <ViewLoading label={t("dup.loading")} />
       ) : q.isError ? (
         <p className="m-0" role="alert">{t("dup.failed", { message: toAppError(q.error).message })}</p>
       ) : groups.length === 0 ? (

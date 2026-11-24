@@ -46,7 +46,7 @@ export function Sidebar({ roots }: { roots: readonly LibraryRoot[] }) {
       </div>
       <nav className="flex flex-col gap-0.5">
         {VIEWS.map((v) => (
-          <NavItem key={v.id} active={view === v.id} onClick={() => useView.getState().setView(v.id)}>
+          <NavItem key={v.id} nav={v.id} active={view === v.id} onClick={() => useView.getState().setView(v.id)}>
             <span aria-hidden className="w-5 text-center">{v.icon}</span>
             {t(v.key)}
           </NavItem>
@@ -56,7 +56,7 @@ export function Sidebar({ roots }: { roots: readonly LibraryRoot[] }) {
       <Section title={t("nav.smart")}>
         <nav className="flex flex-col gap-0.5" aria-label={t("nav.smart")}>
           {TOOLS.map((v) => (
-            <NavItem key={v.id} active={view === v.id} onClick={() => useView.getState().setView(v.id)}>
+            <NavItem key={v.id} nav={v.id} active={view === v.id} onClick={() => useView.getState().setView(v.id)}>
               <span aria-hidden className="w-5 text-center">{v.icon}</span>
               {t(v.key)}
             </NavItem>

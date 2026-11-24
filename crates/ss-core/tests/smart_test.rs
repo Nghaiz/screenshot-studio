@@ -141,6 +141,55 @@ fn exact_and_reencoded_copies_are_grouped() {
     assert!(dups(&env, DuplicateMode::Exact, None).groups.is_empty(), "trashed images are not proposed again");
 }
 
+const FLAT_GREY: &str = "Screenshot 2026-02-01 090000.png";
+const FLAT_GREY_COPY: &str = "Screenshot 2026-02-02 090000.png";
+const FLAT_WHITE: &str = "Screenshot 2026-02-03 090000.png";
+const SLIVER: &str = "Screenshot 2026-02-04 090000.png";
+
+/// Near-blank images as the real library has them (README Re-score phase 3.4b): flat screenshots of different
+/// sizes and colours, an exact copy of one, and a 1 px high sliver. Their dHashes have 0 set bits.
+fn plant_flat(env: &Env) {
+    let root = env.root_dir();
+    save(&RgbImage::from_pixel(640, 360, Rgb([60, 60, 60])), &root, FLAT_GREY);
+    std::fs::copy(root.join(FLAT_GREY), root.join(FLAT_GREY_COPY)).unwrap();
+    save(&RgbImage::from_pixel(200, 600, Rgb([250, 250, 250])), &root, FLAT_WHITE);
+    save(&RgbImage::from_pixel(14, 1, Rgb([20, 30, 40])), &root, SLIVER);
+}
+
+#[test]
+fn low_information_images_are_exact_only_in_duplicates_and_stats() {
+    let env = Env::new(4);
+    plant_duplicates(&env);
+    plant_flat(&env);
+    env.index(true);
+    let id = |n: &str| env.by_name(n).id;
+    let flats = [id(FLAT_GREY), id(FLAT_GREY_COPY), id(FLAT_WHITE), id(SLIVER)];
+    for f in flats {
+        let h = env.sql_i64(&format!("SELECT dhash FROM image WHERE id = {f}"));
+        assert!(duplicates::is_low_information(h), "flat fixture {f}: dHash {h:#x} has {} set bits", (h as u64).count_ones());
+    }
+    let (b, bj) = (id(B_PNG), id(B_JPG));
+    let grouped = |r: &DuplicateResult| r.groups.iter().map(|g| id_set(&g.image_ids)).collect::<Vec<_>>();
+
+    // Exact: the flat copy is still found, next to the planted exact pair.
+    let exact = grouped(&dups(&env, DuplicateMode::Exact, None));
+    assert!(exact.contains(&id_set(&flats[..2])), "{exact:?}");
+    assert_eq!(exact.len(), 2, "{exact:?}");
+    // Similar: no flat image in any group, at the default Hamming and with every pair in range; the
+    // re-encoded pair is still grouped.
+    for hamming in [None, Some(duplicates::MAX_HAMMING)] {
+        let similar = grouped(&dups(&env, DuplicateMode::Similar, hamming));
+        assert!(similar.iter().all(|g| flats.iter().all(|f| !g.contains(f))), "hamming {hamming:?}: {similar:?}");
+        assert!(similar.iter().any(|g| g.contains(&b) && g.contains(&bj)), "hamming {hamming:?}: {similar:?}");
+    }
+    // Stats counts with the same rule: 2 exact copies (the planted pair, the flat copy), and similar copies
+    // equal to `find_duplicates` similar, which leaves the 4 flat images out (with them: 3 more).
+    let s = env.core.get_stats().unwrap();
+    let similar = dups(&env, DuplicateMode::Similar, None);
+    assert_eq!(s.duplicates_exact, 2);
+    assert_eq!(s.duplicates_similar, similar.groups.iter().map(|g| g.image_ids.len() as i64 - 1).sum::<i64>(), "{:?}", similar.groups);
+}
+
 #[test]
 fn best_image_reasons() {
     let c = |id: i64, pixels: i64, taken_ms: i64, blur: Option<f64>| Candidate {

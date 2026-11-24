@@ -10,6 +10,9 @@ pub const DATA_DIR_ENV: &str = "SS_DATA_DIR";
 pub const CATALOG_FILE: &str = "catalog.sqlite";
 /// Thumbnail dir name inside the data dir.
 pub const THUMBS_DIR: &str = "thumbs";
+/// Python bytecode cache of the AI sidecar inside the data dir (`PYTHONPYCACHEPREFIX`), so the sidecar
+/// never writes `__pycache__` into the install dir, which the uninstaller would leave behind (phase 3.4b).
+pub const SIDECAR_PYCACHE_DIR: &str = "sidecar-pycache";
 
 /// `SS_DATA_DIR` when set and non-empty, else [`DEFAULT_DATA_DIR`].
 pub fn data_dir() -> PathBuf {
@@ -21,6 +24,11 @@ pub fn data_dir() -> PathBuf {
 
 pub fn catalog_path(data_dir: &Path) -> PathBuf {
     data_dir.join(CATALOG_FILE)
+}
+
+/// `<data>\sidecar-pycache` ([`SIDECAR_PYCACHE_DIR`]).
+pub fn sidecar_pycache_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join(SIDECAR_PYCACHE_DIR)
 }
 
 /// `<data>\thumbs\<id % 256 as 2 hex>\<id>_<w>.webp` (contract-sqlite-schema.md); computed, never stored.

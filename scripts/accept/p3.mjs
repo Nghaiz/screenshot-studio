@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Phase 3.4 Accept (P3: OCR hit, planted duplicate, sidecar absent, bundled sidecar; AX-01):
+// Phase 3.4 Accept (P3: OCR hit, planted duplicate, sidecar absent, bundled sidecar; AX-01), extended by phase 3.4b:
 //   node scripts/accept/p3.mjs [--only tests,fixtures,app]
 //
 // Prints one stable line per check on stdout:  PASS|FAIL <check> <value>   (INFO lines are measured-only, never
@@ -28,8 +28,9 @@
 // group app (the INSTALLED app, NSIS bundle of phase 2.3 + the sidecar resources of this phase):
 //   installed-exe     <install dir>\screenshot-studio.exe is target\release's build (lib/install.mjs)
 //   bundled-files     <install dir>\sidecar holds exactly the tracked sidecar/ss_sidecar/**/*.py, byte-identical
-//                     (Python's own runtime __pycache__ aside; no tests, no caches), and <install dir>\contracts holds
-//                     exactly sidecar-jsonrpc.schema.json, byte-identical (tauri.conf.json bundle.resources)
+//                     (no tests, no caches, no __pycache__: since 3.4b the sidecar writes none there), and
+//                     <install dir>\contracts holds exactly sidecar-jsonrpc.schema.json, byte-identical
+//                     (tauri.conf.json bundle.resources)
 //   bundled-sidecar   the installed app, started on a fresh temp data dir with SS_SIDECAR_DIR naming a dir that does
 //                     not exist, reaches sidecar state `ready` (get_sidecar_status over CDP): the dev-checkout
 //                     fallback is disabled that way, so only the bundled source + schema can have been used
@@ -39,11 +40,21 @@
 //                     (AttachConsole + GetConsoleWindow on each python.exe of the sidecar subtree, which must exist)
 //   sidecar-exit      after a user-style close (WM_CLOSE) the app exits and no sidecar process is left
 //   INFO sidecar-processes  the sidecar subtree's executables and command lines
+//   smart-view-ready  (3.4b; one line per view: stats, duplicates, cleanup, settings-ai) the installed app on the REAL
+//                     data dir (read-only: views are opened, nothing in them is clicked), started cold; as soon as the
+//                     grid shows a thumbnail, each view is opened from the library by a click in the page and timed
+//                     to the frame after its content is in the DOM (requestAnimationFrame; value in ms). FAIL over
+//                     SMART_VIEW_READY_MAX_MS, or when any frame in between lost the shell (sidebar or main area
+//                     gone or zero-sized) or showed an empty pane (neither the content nor a labelled
+//                     role=status aria-busy loading state). The app is then closed with WM_CLOSE.
+//   no-pycache-in-install-dir  (3.4b) after both launches, <install dir> holds no __pycache__ dir and no .pyc, and the
+//                     bundled-sidecar run's temp data dir holds the bytecode of <install dir>\sidecar under
+//                     sidecar-pycache (PYTHONPYCACHEPREFIX): proof Python compiled the bundled source, just elsewhere
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { connectApp } from "./lib/cdp.mjs";
+import { connectApp, waitForGrid } from "./lib/cdp.mjs";
 import { INSTALL_DIR, INSTALLED_EXE, installedExeCheck, powershell } from "./lib/install.mjs";
 import { APP_EXE_NAME, ROOT, childEnv, isSidecarRoot, killTree, run, runningPids, ssctl, startApp, treeMemory } from "./lib/run.mjs";
 import { isConsoleWindow, startWindowProbe } from "./lib/windows.mjs";
@@ -59,6 +70,21 @@ const READY_TIMEOUT_MS = 180_000; // sidecar `initialize` answers in ~11-14 s on
 const CONSOLE_SETTLE_MS = 3000; // keep watching for a console window after `ready`
 const CLOSE_MAX_MS = 10_000;
 const GROUPS = ["tests", "fixtures", "app"];
+const PYCACHE_DIR = "sidecar-pycache"; // ss-core paths::SIDECAR_PYCACHE_DIR, under the data dir
+// smart-view-ready budget. Measured 2026-11-24 on the installed app, real library, cold start, sidecar loading: with
+// the views as lazy chunks every view took 306-325 ms to its content although its chunk loaded in 1-2 ms and its IPC
+// in <= 6 ms: React 19 holds a Suspense fallback for >= 300 ms (FALLBACK_THROTTLE_MS). Eager views (phase 3.4b):
+// 10-29 ms. 150 ms is ~5x the slowest eager open and half that 300 ms floor, so a view that suspends again fails.
+const SMART_VIEW_READY_MAX_MS = 150;
+const SMART_VIEW_TIMEOUT_MS = 15_000; // keep timing a slow view past the budget, to report a real number
+const GRID_READY_MS = 60_000;
+// How each view is opened and what "content" means (language-independent hooks: data-nav, data-testid).
+const SMART_VIEWS = [
+  { view: "stats", open: '[data-nav="stats"]', ready: 'main section [data-testid^="tile-"]' },
+  { view: "duplicates", open: '[data-nav="duplicates"]', ready: 'main [data-testid="dup-summary"]' },
+  { view: "cleanup", open: '[data-nav="cleanup"]', ready: 'main [data-testid="clean-start"]' },
+  { view: "settings-ai", open: '[data-testid="ai-pill"]', ready: '[role="dialog"] [data-testid="ai-state"]', close: '[role="dialog"] .ss-btn' },
+];
 
 const results = [];
 function report(ok, check, value) {
@@ -259,16 +285,15 @@ function checkBundledFiles() {
     ...filesUnder(path.join(INSTALL_DIR, "sidecar")).map((f) => `sidecar/${f}`),
     ...filesUnder(path.join(INSTALL_DIR, "contracts")).map((f) => `contracts/${f}`),
   ];
-  const runtimeCache = (f) => /(^|\/)__pycache__\/[^/]+\.pyc$/.test(f); // written by Python when the sidecar imports
   const missing = want.filter((f) => !installed.includes(f));
   const differ = want.filter((f) => installed.includes(f) && !readFileSync(path.join(INSTALL_DIR, f)).equals(readFileSync(path.join(ROOT, f))));
-  const extra = installed.filter((f) => !want.includes(f) && !runtimeCache(f));
+  const extra = installed.filter((f) => !want.includes(f));
   const sidecarPy = want.filter((f) => f.endsWith(".py")).length;
   const ok = sidecarPy > 0 && want.includes("contracts/sidecar-jsonrpc.schema.json") && !missing.length && !differ.length && !extra.length;
   report(
     ok,
     "bundled-files",
-    `${INSTALL_DIR}: ${sidecarPy} sidecar .py + schema expected; missing=${missing.join(",") || "none"} differ=${differ.join(",") || "none"} extra=${extra.join(",") || "none"} runtimePyc=${installed.filter(runtimeCache).length}`,
+    `${INSTALL_DIR}: ${sidecarPy} sidecar .py + schema expected; missing=${missing.join(",") || "none"} differ=${differ.join(",") || "none"} extra=${extra.join(",") || "none"}`,
   );
 }
 
@@ -299,6 +324,9 @@ async function closeApp(pid) {
 /** Sidecar processes seen so far + the current sidecar subtree of the app, by PID. */
 const mergeProcs = (seen, appPid) => [...new Map([...seen, ...treeMemory(appPid, { exclude: isSidecarRoot }).excluded.procs].map((p) => [p.pid, p])).values()];
 
+/** The bundled-sidecar run's data dir (fresh, under the run's temp dir). */
+const appDataDir = (tmp) => path.join(tmp, "app-data");
+
 async function checkInstalledApp(tmp) {
   const inst = installedExeCheck();
   report(inst.ok, "installed-exe", inst.value);
@@ -307,7 +335,7 @@ async function checkInstalledApp(tmp) {
     for (const c of ["bundled-sidecar", "no-console-window", "sidecar-exit"]) report(false, c, "not run: app not installed");
     return;
   }
-  const dataDir = path.join(tmp, "app-data");
+  const dataDir = appDataDir(tmp);
   mkdirSync(dataDir, { recursive: true });
   const noSource = path.join(tmp, "no-sidecar-source"); // never created: disables the dev-checkout fallback
   let probe;
@@ -383,6 +411,124 @@ async function checkInstalledApp(tmp) {
   for (const pid of left) killTree(pid);
 }
 
+// --- the installed app on the real library: smart views open at once (phase 3.4b) ------------------------
+
+/**
+ * Opens `v` by a click inside the page and follows it frame by frame (requestAnimationFrame) until its content is
+ * in the DOM, then one frame more (the frame that painted it). Each frame is classified: `content`, `loading` (a
+ * labelled role=status aria-busy element), `empty` (neither: what the user sees as a blank pane) or `shell-gone`
+ * (the sidebar or the main area missing or zero-sized).
+ */
+function timeView(page, v) {
+  return page.evaluate(
+    async ({ v, timeoutMs }) => {
+      const $ = (sel) => document.querySelector(sel);
+      const sized = (el) => {
+        const r = el?.getBoundingClientRect();
+        return !!r && r.width > 0 && r.height > 0;
+      };
+      const loading = () => [...document.querySelectorAll('[role="status"][aria-busy="true"]')].some((e) => e.textContent.trim().length > 0);
+      const state = () => (!sized($("aside")) || !sized($("main")) ? "shell-gone" : $(v.ready) ? "content" : loading() ? "loading" : "empty");
+      const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+      const opener = $(v.open);
+      if (!opener) return { error: `no ${v.open} in the page` };
+      await frame();
+      const t0 = performance.now();
+      opener.click();
+      const frames = {};
+      let readyMs = null;
+      while (performance.now() - t0 < timeoutMs) {
+        await frame();
+        const s = state();
+        frames[s] = (frames[s] ?? 0) + 1;
+        if (s === "content") {
+          await frame();
+          readyMs = performance.now() - t0;
+          break;
+        }
+      }
+      if (v.close) $(v.close)?.click();
+      return { readyMs, frames };
+    },
+    { v, timeoutMs: SMART_VIEW_TIMEOUT_MS },
+  );
+}
+
+/** Back to the library grid between two views (as a user would come from it). */
+async function toLibrary(page) {
+  await page.click('[data-nav="library"]');
+  await page.waitForSelector('[role="grid"]', { timeout: 10_000 });
+}
+
+async function checkSmartViews() {
+  const pending = [...SMART_VIEWS];
+  const failRest = (why) => pending.splice(0).forEach((v) => report(false, "smart-view-ready", `${v.view} not measured: ${why}`));
+  if (!installedExeCheck().present) return failRest("app not installed");
+  let app;
+  let cdp;
+  let sidecar = [];
+  try {
+    app = await startApp({ exe: INSTALLED_EXE }); // real data dir: no SS_DATA_DIR (README D10: only read)
+    cdp = await connectApp(app.cdpUrl);
+    await waitForGrid(cdp.page, GRID_READY_MS);
+    const gridMs = Date.now() - app.startedAt;
+    while (pending.length) {
+      const v = pending[0];
+      await toLibrary(cdp.page);
+      const r = await timeView(cdp.page, v);
+      pending.shift();
+      if (r.error) {
+        report(false, "smart-view-ready", `${v.view} ${r.error}`);
+        continue;
+      }
+      const bad = (r.frames.empty ?? 0) + (r.frames["shell-gone"] ?? 0);
+      const ms = r.readyMs === null ? null : Math.round(r.readyMs);
+      const frames = Object.entries(r.frames).map(([k, n]) => `${k}=${n}`).join(" ");
+      report(
+        ms !== null && ms <= SMART_VIEW_READY_MAX_MS && bad === 0,
+        "smart-view-ready",
+        `${v.view} ${ms === null ? `not ready in ${SMART_VIEW_TIMEOUT_MS}` : ms}ms (budget ${SMART_VIEW_READY_MAX_MS}ms; frames ${frames}; grid shown ${gridMs}ms after spawn)`,
+      );
+    }
+    sidecar = mergeProcs([], app.pid);
+  } catch (e) {
+    console.error(e.stack ?? e.message);
+    failRest(e.message.split(/\r?\n/)[0]);
+  } finally {
+    await cdp?.close().catch(() => {});
+    if (app) {
+      const c = await closeApp(app.pid);
+      if (!c.graceful) console.error(`smart views: the app did not exit ${c.ms} ms after WM_CLOSE; killed`);
+      // The sidecar exits with the app (sidecar-exit); wait for it before the install dir is checked.
+      const pids = sidecar.map((p) => p.pid);
+      const t0 = Date.now();
+      while (Date.now() - t0 < CLOSE_MAX_MS && stillRunning(pids).length) await sleep(250);
+      for (const pid of stillRunning(pids)) killTree(pid);
+    }
+  }
+}
+
+/** Every `__pycache__` dir and `.pyc` file under `dir` (paths relative to it). */
+function pycacheUnder(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((d) => (d.isDirectory() && d.name === "__pycache__") || (d.isFile() && d.name.endsWith(".pyc")))
+    .map((d) => path.relative(dir, path.join(d.parentPath, d.name)).split(path.sep).join("/"));
+}
+
+function checkNoPycache(tmp) {
+  const inInstall = pycacheUnder(INSTALL_DIR);
+  // PYTHONPYCACHEPREFIX mirrors a source's absolute path without its drive: <prefix>\IOT_Tools\apps\...\sidecar\...
+  const mirrored = path.join(appDataDir(tmp), PYCACHE_DIR, INSTALL_DIR.replace(/^[A-Za-z]:[\\/]*/, ""), "sidecar");
+  const compiled = pycacheUnder(mirrored).filter((f) => f.endsWith(".pyc"));
+  report(
+    inInstall.length === 0 && compiled.length > 0,
+    "no-pycache-in-install-dir",
+    `${INSTALL_DIR}: ${inInstall.length ? `${inInstall.length} cache entries (${inInstall.slice(0, 4).join(", ")})` : "no __pycache__, no .pyc"}; ` +
+      `bundled sidecar's bytecode in <app data>/${PYCACHE_DIR}: ${compiled.length} .pyc${compiled.length ? "" : " (missing: the redirect is not proven)"}`,
+  );
+}
+
 // --- main ------------------------------------------------------------------------------------------------
 
 function parseOnly(argv) {
@@ -412,7 +558,11 @@ async function main(argv) {
     if ((want("tests") || want("fixtures")) && !checkBuild()) return 1;
     if (want("tests")) checkLaneTests();
     if (want("fixtures")) checkFixtures(tmp);
-    if (want("app")) await checkInstalledApp(tmp);
+    if (want("app")) {
+      await checkInstalledApp(tmp);
+      await checkSmartViews();
+      checkNoPycache(tmp);
+    }
   } finally {
     // WebView2 may hold its profile for a moment after the app exits.
     rmSync(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 });
