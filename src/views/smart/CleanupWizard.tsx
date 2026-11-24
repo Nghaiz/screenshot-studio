@@ -5,6 +5,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { DuplicateResult } from "@bindings/DuplicateResult";
 import { applyCleanup } from "../../actions/smart";
+import { ViewLoading } from "../../components/ViewLoading";
 import { useDuplicates, useIssues, useNumberSetting, useOldTrash } from "../../data/smart";
 import { useT, type MessageKey } from "../../i18n";
 import { DUP_HAMMING_DEFAULT, OLD_TRASH_DAYS, WIZARD_PREVIEW_COUNT } from "../../lib/defaults";
@@ -101,7 +102,7 @@ export default function CleanupWizard() {
     body = (
       <>
         <p className="m-0 max-w-2xl">{t("clean.intro")}</p>
-        <Nav><button type="button" className="ss-btn ss-btn-primary" onClick={() => setStep(1)}>{t("clean.start")}</button></Nav>
+        <Nav><button type="button" className="ss-btn ss-btn-primary" data-testid="clean-start" onClick={() => setStep(1)}>{t("clean.start")}</button></Nav>
       </>
     );
   } else if (step <= STEPS.length) {
@@ -121,7 +122,7 @@ export default function CleanupWizard() {
         {d.error ? (
           <p className="m-0" role="alert">{t("clean.failed", { message: d.error })}</p>
         ) : d.ids === null ? (
-          <p className="ss-muted m-0" aria-busy="true">{t("clean.loading")}</p>
+          <ViewLoading label={t("clean.loading")} />
         ) : (
           <>
             <label className="flex items-center gap-2 font-semibold">

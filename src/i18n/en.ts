@@ -453,7 +453,7 @@ export const en: { [K in MessageKey]: string } = {
   "dup.exact": "Exact copies",
   "dup.similar": "Similar",
   "dup.hamming": "Allowed difference: {n}",
-  "dup.hammingHelp": "Low: only near-identical images. High: also groups images that differ a little.",
+  "dup.hammingHelp": "Low: only near-identical images. High: also groups images that differ a little. Near-blank (flat) images are only matched as exact copies.",
   "dup.summary": "{groups} groups · {extra} extra copies",
   "dup.none": "No duplicates found.",
   "dup.loading": "Looking for duplicates…",
@@ -505,6 +505,7 @@ export const en: { [K in MessageKey]: string } = {
 
   "stats.title": "Dashboard",
   "stats.failed": "Could not load the statistics: {message}",
+  "stats.loading": "Loading the statistics…",
   "stats.total": "Images",
   "stats.size": "Total size",
   "stats.cloudOnly": "Cloud-only",

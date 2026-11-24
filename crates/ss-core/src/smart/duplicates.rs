@@ -4,7 +4,9 @@
 //! - `similar`: dHash (64-bit gradient hash) Hamming distance <= `hamming`. Groups are seeded, not
 //!   chained: images are taken in id order, and each not-yet-grouped image collects every not-yet-
 //!   grouped image within `hamming` of ITSELF (a BK-tree query), so a chain of small differences never
-//!   merges two unrelated screenshots.
+//!   merges two unrelated screenshots. Low-information hashes ([`is_low_information`]) take no part:
+//!   a near-flat image has almost no gradient bits, so any two of them are within `hamming` however
+//!   different they are (Deferred decision #33). They stay eligible for `exact`.
 //!
 //! Population: present (`missing = 0`), not in the in-app trash, optionally one root. Best image of a
 //! group: most pixels, then newest (`taken_ms`, then `mtime_ms`), then sharpest (`blur_score`), then
@@ -21,6 +23,21 @@ use crate::contract::ipc::{DuplicateGroup, DuplicateMode, DuplicateReason, Dupli
 
 /// The largest meaningful Hamming distance of a 64-bit hash.
 pub const MAX_HAMMING: i64 = 64;
+
+/// A dHash with fewer set bits than this, or fewer clear bits, carries too little signal for `similar`
+/// (Deferred decision #33). Basis, real library 2026-11-24 (5,662 hashes, counts in README Re-score
+/// phase 3.4b): of the 241 pairs within Hamming 6 whose lower hash has 0-9 set bits, 0-22% per bucket
+/// had matching aspect ratios (within 15%), against 62-94% for the 870 pairs from 10 set bits up; every
+/// hash with 0-6 set bits had such a partner (the 13 with 0 bits are all 1-14 px slivers). The 4 hashes
+/// with 58-64 set bits formed 2 pairs, both of different aspects.
+pub const DUP_MIN_INFO_BITS: u32 = 10;
+
+/// True when `dhash` has fewer than [`DUP_MIN_INFO_BITS`] set bits or fewer than that many clear bits:
+/// a flat (or one-way gradient) image whose hash collides with every other flat image.
+pub fn is_low_information(dhash: i64) -> bool {
+    let ones = (dhash as u64).count_ones();
+    ones.min(64 - ones) < DUP_MIN_INFO_BITS
+}
 
 #[derive(Debug, Clone)]
 pub struct Candidate {
@@ -72,17 +89,22 @@ fn exact_groups(c: &[Candidate]) -> Vec<Vec<usize>> {
     out
 }
 
+/// The hash `similar` may compare: present and not low-information.
+fn informative(cand: &Candidate) -> Option<i64> {
+    cand.dhash.filter(|&h| !is_low_information(h))
+}
+
 fn similar_groups(c: &[Candidate], hamming: u32) -> Vec<Vec<usize>> {
     let mut tree = BkTree::default();
     for (i, cand) in c.iter().enumerate() {
-        if let Some(h) = cand.dhash {
+        if let Some(h) = informative(cand) {
             tree.insert(h as u64, i);
         }
     }
     let mut taken = vec![false; c.len()];
     let mut out = Vec::new();
     for (i, cand) in c.iter().enumerate() {
-        let Some(h) = cand.dhash else { continue };
+        let Some(h) = informative(cand) else { continue };
         if taken[i] {
             continue;
         }
@@ -233,7 +255,64 @@ mod tests {
             }
         }
         // a - b - c each 4 bits apart, a - c 8 bits: with hamming 4 the seed a takes b only.
-        let chain = vec![cand(1, 0), cand(2, 0xF), cand(3, 0xFF)];
+        let chain = vec![cand(1, BALANCED), cand(2, BALANCED ^ 0xF), cand(3, BALANCED ^ 0xFF)];
         assert_eq!(similar_groups(&chain, 4), vec![vec![0, 1]]);
+    }
+
+    /// 32 set bits, 32 clear: an ordinary screenshot's hash.
+    const BALANCED: i64 = 0x0F0F_0F0F_0F0F_0F0F;
+    /// A hash with exactly `ones` set bits (the low ones).
+    fn bits(ones: u32) -> i64 {
+        if ones == 64 { -1 } else { ((1u64 << ones) - 1) as i64 }
+    }
+    fn ids(c: &[Candidate], groups: &[Vec<usize>]) -> Vec<Vec<i64>> {
+        groups.iter().map(|g| g.iter().map(|&i| c[i].id).collect()).collect()
+    }
+
+    #[test]
+    fn low_information_threshold_is_symmetric() {
+        for ones in 0..=64 {
+            let low = !(DUP_MIN_INFO_BITS..=64 - DUP_MIN_INFO_BITS).contains(&ones);
+            assert_eq!(is_low_information(bits(ones)), low, "{ones} set bits");
+        }
+        assert!(!is_low_information(BALANCED));
+    }
+
+    #[test]
+    fn low_information_images_never_form_or_join_a_similar_group() {
+        // Real-library shape (README Re-score phase 3.4b): flat slivers (0 bits), near-blank screenshots
+        // (2-9 bits) and one-way gradients (55+ bits), every pair within the default Hamming 6 or close.
+        let c = vec![
+            cand(1, 0),
+            cand(2, 0),
+            cand(3, bits(3)),
+            cand(4, bits(9)),
+            cand(5, bits(9) << 3),
+            cand(6, bits(55)),
+            cand(7, -1),
+            // Informative pair at the boundary (exactly 10 set bits / 10 clear bits) and an ordinary pair.
+            cand(8, bits(10)),
+            cand(9, bits(10) << 2),
+            cand(10, !bits(10)),
+            cand(11, !(bits(10) << 2)),
+            cand(12, BALANCED),
+            cand(13, BALANCED ^ 0b101),
+        ];
+        let got = ids(&c, &similar_groups(&c, 6));
+        assert_eq!(got, vec![vec![8, 9], vec![10, 11], vec![12, 13]], "low-information hashes (ids 1-7) are in no group");
+        // With every pair in range (Hamming 64) only the informative ones gather.
+        assert_eq!(ids(&c, &similar_groups(&c, 64)), vec![vec![8, 9, 10, 11, 12, 13]]);
+        // A low-information image within range of an informative one does not join it either.
+        let mixed = vec![cand(1, bits(12)), cand(2, bits(9)), cand(3, bits(12) << 1)];
+        assert_eq!(ids(&mixed, &similar_groups(&mixed, 4)), vec![vec![1, 3]]);
+    }
+
+    #[test]
+    fn low_information_copies_stay_eligible_for_exact() {
+        let flat = |id: i64, hash: &str| Candidate { content_hash: Some(hash.into()), ..cand(id, 0) };
+        let c = vec![flat(1, "a"), flat(2, "a"), flat(3, "b")];
+        assert_eq!(ids(&c, &groups(&c, DuplicateMode::Exact, 0)), vec![vec![1, 2]]);
+        assert!(groups(&c, DuplicateMode::Similar, MAX_HAMMING as u32).is_empty());
+        assert_eq!(redundant(&groups(&c, DuplicateMode::Exact, 0)), 1);
     }
 }

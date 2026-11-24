@@ -3,6 +3,46 @@
 Non-obvious gotchas found while building Screenshot Studio. Owner rule: lessons stay in this repo, nothing goes
 to a kit. Newest first. One entry: what happened, why, what to do.
 
+## 2026-11-24 — phase 3.4b
+
+### React 19 holds a Suspense fallback for at least 300 ms, however fast the lazy chunk loads
+- **Seen (installed app, real library, CDP):** Stats, Duplicates, Cleanup and Settings > AI each took 306-325 ms
+  from the click to their content on first open, while the view's chunk loaded from `tauri.localhost` in 1-2 ms and
+  its IPC took <= 6 ms. Screencast frames showed the `ss-shimmer` fallback panel from ~20 ms to ~320-400 ms; in a
+  still image that panel reads as an empty pane. A second open (chunk cached on the lazy object) took 2-5 ms.
+- **Why:** react-dom 19.3.1 `FALLBACK_THROTTLE_MS = 300`: once a fallback has committed, revealing the content waits
+  until 300 ms after it. Duplicates' queries even started only then (they subscribe on mount).
+- **Do:** do not lazy-load small views (the four chunks were 22 KB together; now eager imports in `ToolView.tsx` and
+  `SettingsPanel.tsx`), and give data still in flight a labelled state (`components/ViewLoading.tsx`), never a bare
+  shimmer. `p3.mjs` `smart-view-ready` gates it (budget under the 300 ms floor).
+- **Test trap:** `React.lazy` caches the resolved module on the lazy object for the whole module graph, so a
+  "renders in the click's commit" test passed with the old lazy code inside `smart.test.tsx` (other tests had
+  opened the views first). It lives in its own file (`smartviews.test.tsx`), seen red against the lazy version.
+
+### CDP timings see the page, not the window's pixels
+- **Seen:** the orchestrator saw (cua-driver) smart views blank for 2-5 s and once the whole window blank. Over CDP,
+  with the window visible, with and without the accessibility tree enabled, the DOM had the content at ~0.3 s and
+  none of 993 screencast frames around 4 view switches lost the sidebar.
+- **Do:** treat a blank seen only from outside (occluded or background window, WebView2's LOW memory target from
+  3.4) as unexplained until it is reproduced with a screen-level tool; CDP screencast frames are compositor output.
+
+### `PYTHONPYCACHEPREFIX` ignores every existing `__pycache__`
+- **Seen:** `python -m ss_sidecar --selftest` (CUDA) 13.2 s with the venv's own caches; 40.1 s on the first start
+  with an empty prefix (3,162 `.pyc`, 78 MB: torch, transformers, the standard library ...); 13.4 s on every start
+  after. Once set, Python reads bytecode only from the prefix tree.
+- The tree mirrors each source's absolute path without its drive:
+  `<prefix>\IOT_Tools\apps\ScreenshotStudio\sidecar\ss_sidecar\server.cpython-313.pyc`.
+- **Do:** expect one slow sidecar start per data dir after the change, and on every `p3.mjs` run (its temp data dirs
+  start empty).
+
+### A dHash's set-bit count says how much it can tell apart
+- **Seen (real library, 5,662 hashes):** 13 hashes with 0 set bits, all 1-14 px slivers; every hash with 0-6 set bits
+  had a partner within Hamming 6. Of the pairs within 6 whose lower hash had 0-9 set bits, 0-22% per bucket had
+  matching aspect ratios (within 15%), against 62-94% from 10 bits up. dHash sets a bit where a cell is darker than its
+  right neighbour, so flat images give 0 bits and left-to-right gradients 64: both ends collide.
+- **Do:** `smart::duplicates::is_low_information` (fewer than 10 set or 10 clear bits) keeps such hashes out of
+  `similar`; `exact` still finds their copies (Deferred decision #33).
+
 ## 2026-11-24 — phase 3.4
 
 ### The memory gate's scroll peak is render churn, and the shimmer's frames are what trim the decode cache
@@ -60,7 +100,7 @@ to a kit. Newest first. One entry: what happened, why, what to do.
 ### dHash puts near-blank images in one "similar" group
 - **Seen:** on the real library one `similar` group held 17 images from 1x1 px to 2468 px wide, aspect 0.33-6.5,
   dHash popcounts 0-7: a flat image has almost no gradient bits, so any two are within the Hamming limit.
-- **Do:** treat a hash with few set bits as "no signal" before trusting a similar group (not fixed in 3.4).
+- **Do:** treat a hash with few set bits as "no signal" before trusting a similar group (fixed in 3.4b, see above).
 
 ### A WAL catalog does not open read-only while it is closed
 - **Seen:** `node:sqlite` `readOnly: true` on `catalog.sqlite` failed with "unable to open database file" while

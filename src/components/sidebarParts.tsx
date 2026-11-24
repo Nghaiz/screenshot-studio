@@ -25,15 +25,18 @@ export interface NavItemProps {
   };
   /** Small trailing buttons (edit, delete); rendered outside the main button so they stay separately focusable. */
   tools?: ReactNode;
+  /** `data-nav` on the button: the view id, so scripts find it in any language (scripts/accept/p3.mjs). */
+  nav?: string;
 }
 
-export function NavItem({ active, onClick, children, label, drop, tools }: NavItemProps) {
+export function NavItem({ active, onClick, children, label, drop, tools, nav }: NavItemProps) {
   return (
     <div className="ss-nav group flex items-center rounded" {...drop}>
       <button
         type="button"
         aria-current={active ? "page" : undefined}
         aria-label={label}
+        data-nav={nav}
         className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left"
         style={active ? { background: "var(--ss-accent)", color: "var(--ss-accent-contrast)" } : { color: "var(--ss-text)" }}
         onClick={onClick}
