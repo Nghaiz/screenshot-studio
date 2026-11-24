@@ -3,6 +3,43 @@
 Non-obvious gotchas found while building Screenshot Studio. Owner rule: lessons stay in this repo, nothing goes
 to a kit. Newest first. One entry: what happened, why, what to do.
 
+## 2026-11-24 — phase 3.4c
+
+### A 64-bit dHash (and pHash) matches a layout, not an image
+- **Seen (real library, counts only):** `similar` put 27 screenshots of one diagram layout in one group (~1830x280
+  each, other labels) and 9 unrelated screenshots in another. Of the 875 pairs within
+  Hamming 6, 461 also had pHash distance 0: the DCT mean hash of an 8x8 grid is just as blind to a mostly white
+  screenshot's text. Only 59 of the 875 even had aspect ratios a resize could explain.
+- **Do:** let hashes propose and other evidence decide (`smart::near_copy`, Deferred decision #35): the aspect ratio,
+  then the stored OCR text and embeddings. Without AI rows only same-size pairs with close hashes count, because
+  re-captures of one layout a few pixels apart collide at every hash distance.
+
+### OCR text of a copy is not stable, and SigLIP sees layout more than content
+- **Seen (synthetic copies of 20 local screenshots, read-only copies deleted after):** token Jaccard between an image
+  and its JPEG q85 re-encode fell to 0.57, to its 50% resize to 0.07 (small text and tone marks go first); a cursor
+  over a textless image was read as a letter. Character trigrams of diacritic-folded words were the steadiest
+  measure of the six tried. Cosine, by contrast, stayed high for things that are not copies: same-layout pairs with
+  other labels up to 0.99, a window whose content changed 0.99.
+- **Do:** compare OCR text with a tolerant measure and a threshold between measured copies and measured content
+  changes, never by equality; use the cosine as a veto, not as proof. Label borderline real pairs by diffing their
+  OCR lines in a scratch dir (never in the repo), and keep each threshold's basis next to its constant.
+
+### A BK-tree is slow for 64-bit hashes at small radii, and a HashMap per OCR text is slow too
+- **Seen (ssctl on a copy of the real catalog, process start subtracted):** `similar` took ~73 ms at Hamming 6 but
+  ~19 ms at 20: every seed queried the BK-tree, and a radius-6 query still visits much of a 5,607-node tree; at 20
+  the first seeds swallowed hundreds of images and few queries ran. A flat scan of all 15.7M pairs (distances as
+  bytes, then the hits) costs the same at any radius: ~20 ms for the whole call at 6. The confirm stage then
+  took ~145 ms at 20 (2,321 shape-fit pairs, ~2,000 images) while it built a `HashMap<[char; 3], u32>` of trigrams
+  per OCR text up front; sorted `Vec<u64>` trigrams built only when a pair reaches the text check: ~50 ms.
+- **Do:** time a changed path at the slider's extremes, not only at the default; order a rule's checks cheapest
+  first (embedding dot product before text) and build expensive per-image data lazily (`OnceCell`).
+
+### Python string literals inside a Git Bash heredoc still process escapes
+- **Seen:** a `python - <<'EOF'` patch script whose replacement text held `'\\''` and `"...\\n..."` wrote `'''` and real
+  newlines into the Rust source: the quoted heredoc kept the backslashes, Python's own string literal then ate them.
+- **Do:** for code containing backslashes or quote escapes, use the Edit/Write tool (phase 3.3's heredoc entry), or
+  read the replacement text from a file instead of a Python literal.
+
 ## 2026-11-24 — phase 3.4b
 
 ### React 19 holds a Suspense fallback for at least 300 ms, however fast the lazy chunk loads

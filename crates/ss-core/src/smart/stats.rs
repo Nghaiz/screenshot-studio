@@ -50,8 +50,8 @@ pub fn get_stats(conn: &Connection, hamming: u32) -> Result<Stats, AppError> {
         [TOP_TAGS],
     )?;
     let cands: Vec<Candidate> = duplicates::load(conn, None)?;
-    let duplicates_exact = duplicates::redundant(&duplicates::groups(&cands, DuplicateMode::Exact, 0));
-    let duplicates_similar = duplicates::redundant(&duplicates::groups(&cands, DuplicateMode::Similar, hamming));
+    let duplicates_exact = duplicates::redundant(&duplicates::groups(conn, &cands, DuplicateMode::Exact, 0)?);
+    let duplicates_similar = duplicates::redundant(&duplicates::groups(conn, &cands, DuplicateMode::Similar, hamming)?);
     Ok(Stats { counts, by_month, by_aspect, by_folder, by_category, top_tags, duplicates_exact, duplicates_similar })
 }
 

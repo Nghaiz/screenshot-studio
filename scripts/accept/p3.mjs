@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Phase 3.4 Accept (P3: OCR hit, planted duplicate, sidecar absent, bundled sidecar; AX-01), extended by phase 3.4b:
+// Phase 3.4 Accept (P3: OCR hit, planted duplicate, sidecar absent, bundled sidecar; AX-01), extended by phases
+// 3.4b and 3.4c:
 //   node scripts/accept/p3.mjs [--only tests,fixtures,app]
 //
 // Prints one stable line per check on stdout:  PASS|FAIL <check> <value>   (INFO lines are measured-only, never
@@ -17,12 +18,16 @@
 //   fixtures          lib/p3_fixtures.py (sidecar venv Python, Pillow): 50 images, #23 renders `Hoá đơn 2026
 //                     INVOICE-7731`, planted-exact.png = the bytes of #7, planted-similar.jpg = #9 re-encoded JPEG
 //   index             `ssctl add-root` + `ssctl index`: total == thumbOk == 52
+//   dupes-similar-no-ai  (3.4c) `ssctl dupes --mode similar --json` before the AI pass (no OCR text, no
+//                     embedding: the hash-only rule of README Deferred decision #35): a group {#9,
+//                     planted-similar.jpg} (same size, so hashes may vouch for it); any other group is the
+//                     exact pair
 //   ai                `ssctl ai --tasks ocr,embed --json`: per task done == candidates == 52, failed == skippedCloud == 0
 //   search-ocr        `ssctl search "INVOICE-7731" --json` returns the invoice (no file name carries the text)
 //   search-unaccented `ssctl search "hoa don" --json` returns it too (no diacritics, `đ` typed as `d`)
 //   dupes-exact       `ssctl dupes --mode exact --json`: exactly one group, {#7, planted-exact.png}
-//   dupes-similar     `ssctl dupes --mode similar --json`: a group {#9, planted-similar.jpg}; any other group is
-//                     the exact pair
+//   dupes-similar     `ssctl dupes --mode similar --json` after the AI pass (OCR text and embeddings stored, so
+//                     they decide): a group {#9, planted-similar.jpg}; any other group is the exact pair
 //   sidecar-absent    `ssctl set sidecarVenv "\"<temp>/no-venv\""`, then `ssctl status --json` reports `absent`
 //   search-absent     ... and `ssctl search "INVOICE" --json` exits 0 with the invoice (FTS over stored OCR text)
 // group app (the INSTALLED app, NSIS bundle of phase 2.3 + the sidecar resources of this phase):
@@ -184,6 +189,18 @@ function dupeGroups(dataDir, mode, byId) {
 const sameSet = (a, b) => a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
 const show = (groups) => groups.map((g) => `{${g.join(",")}}`).join(" ") || "none";
 
+/** `similar` groups: the planted pair {#9, its JPEG} is one; any other group is the planted exact pair. */
+function checkSimilar(dataDir, fx, check) {
+  try {
+    const similar = dupeGroups(dataDir, "similar", catalogIds(dataDir).byId);
+    const hit = similar.some((g2) => sameSet(g2, fx.similar));
+    const strays = similar.filter((g2) => !sameSet(g2, fx.similar) && !sameSet(g2, fx.exact));
+    report(hit && strays.length === 0, check, `groups=${similar.length} ${show(similar)} expected {${fx.similar.join(",")}} (+ the exact pair)`);
+  } catch (e) {
+    report(false, check, e.message);
+  }
+}
+
 function checkFixtures(tmp) {
   const lib = path.join(tmp, "lib");
   const dataDir = path.join(tmp, "data");
@@ -210,6 +227,7 @@ function checkFixtures(tmp) {
     console.error(tail(idx.out, 20));
     return;
   }
+  checkSimilar(dataDir, fx, "dupes-similar-no-ai");
 
   const t0 = Date.now();
   const ai = ssctl(["ai", "--tasks", "ocr,embed"], { dataDir });
@@ -249,14 +267,7 @@ function checkFixtures(tmp) {
   } catch (e) {
     report(false, "dupes-exact", e.message);
   }
-  try {
-    const similar = dupeGroups(dataDir, "similar", ids.byId);
-    const hit = similar.some((g2) => sameSet(g2, fx.similar));
-    const strays = similar.filter((g2) => !sameSet(g2, fx.similar) && !sameSet(g2, fx.exact));
-    report(hit && strays.length === 0, "dupes-similar", `groups=${similar.length} ${show(similar)} expected {${fx.similar.join(",")}} (+ the exact pair)`);
-  } catch (e) {
-    report(false, "dupes-similar", e.message);
-  }
+  checkSimilar(dataDir, fx, "dupes-similar");
 
   // Sidecar absent: point the venv setting at a folder that does not exist (contract-tauri-ipc § Setting keys).
   const noVenv = path.join(tmp, "no-venv").split(path.sep).join("/");

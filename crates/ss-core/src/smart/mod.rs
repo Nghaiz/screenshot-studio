@@ -6,5 +6,6 @@ pub mod blur;
 pub mod categories;
 pub mod duplicates;
 pub mod issues;
+pub mod near_copy;
 pub mod sessions;
 pub mod stats;

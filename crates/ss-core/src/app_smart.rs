@@ -181,7 +181,7 @@ impl AppCore {
         }
         self.catalog.read(|conn| {
             let cands = duplicates::load(conn, req.root_id)?;
-            Ok(duplicates::find(&cands, req.mode, hamming as u32))
+            duplicates::find(conn, &cands, req.mode, hamming as u32)
         })
     }
 

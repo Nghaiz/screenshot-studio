@@ -1,7 +1,8 @@
 //! Phase 3.2: the sidecar-free smart features. A planted exact copy and a re-encoded (smaller JPEG) near
 //! copy are grouped with the right best image; sessions split at the gap; a blurry image is flagged from
 //! its 320 thumbnail (scored in the thumbnail pass and backfilled for older rows); tiny images listed;
-//! `get_stats` breakdowns sum to the row counts.
+//! `get_stats` breakdowns sum to the row counts. Phase 3.4c: `similar` means near-identical copies, so a
+//! same-layout pair with different OCR text is not grouped, and a resize needs stored AI evidence.
 
 mod common {
     pub mod env;
@@ -99,6 +100,35 @@ fn dups(env: &Env, mode: DuplicateMode, hamming: Option<i64>) -> DuplicateResult
     env.core.find_duplicates(FindDuplicatesReq { mode, hamming, root_id: None }).unwrap()
 }
 
+/// Stores what an AI pass would for `id` (the rows ss-core `ai` writes): OCR text and an embedding.
+fn vouch(env: &Env, id: i64, text: &str, vec: &[f32]) {
+    let hex: String = vec.iter().flat_map(|f| f.to_le_bytes()).map(|b| format!("{b:02X}")).collect();
+    env.exec(&format!(
+        "INSERT INTO ocr_result (image_id, text, lines_json, engine, done_at) VALUES ({id}, '{}', '[]', 'rapidocr', 0)
+           ON CONFLICT(image_id) DO UPDATE SET text = excluded.text;
+         INSERT INTO embedding (image_id, model, dim, vec, done_at) VALUES ({id}, 'test-model', {}, X'{hex}', 0)
+           ON CONFLICT(image_id) DO UPDATE SET dim = excluded.dim, vec = excluded.vec;",
+        text.replace('\'', "''"),
+        vec.len()
+    ));
+}
+
+const REPORT: &str = "Quarterly report 2026 - Total revenue 4,810 - Region North - Prepared by finance";
+/// REPORT as OCR read it from the smaller copy (`o` read as `0`).
+const REPORT_REREAD: &str = "Quarterly rep0rt 2026 - Total revenue 4,810 - Region North - Prepared by finance";
+
+/// The planted re-encoded pair as the AI pass reads it: the same text (OCR misread one letter of the
+/// smaller copy) and near-equal embeddings.
+fn vouch_reencoded_pair(env: &Env) {
+    vouch(env, env.by_name(B_PNG).id, REPORT, &[0.9, 0.3, 0.1]);
+    vouch(env, env.by_name(B_JPG).id, REPORT_REREAD, &[0.9, 0.31, 0.1]);
+}
+
+/// Groups of `r` as id sets.
+fn grouped(r: &DuplicateResult) -> Vec<BTreeSet<i64>> {
+    r.groups.iter().map(|g| id_set(&g.image_ids)).collect()
+}
+
 // ---------------------------------------------------------------------------------------------
 // Duplicates
 // ---------------------------------------------------------------------------------------------
@@ -119,6 +149,10 @@ fn exact_and_reencoded_copies_are_grouped() {
     assert_eq!((g.group_id, g.best_id, g.reason), (1, a2, DuplicateReason::Newest), "same pixels: the newer copy wins");
     assert_eq!(g.image_ids, [a2, a], "best first");
 
+    // Before any AI pass only hashes can vouch: the identical pair is grouped, the downscaled JPEG is not
+    // (a resize needs OCR text or an embedding, Deferred decision #35).
+    assert_eq!(grouped(&dups(&env, DuplicateMode::Similar, None)), [id_set(&[a, a2])]);
+    vouch_reencoded_pair(&env);
     let similar = dups(&env, DuplicateMode::Similar, None);
     let group_of = |x: i64| similar.groups.iter().find(|g| g.image_ids.contains(&x)).unwrap_or_else(|| panic!("{x} not grouped: {similar:?}"));
     let gb = group_of(b);
@@ -134,9 +168,15 @@ fn exact_and_reencoded_copies_are_grouped() {
     assert_eq!(err(FindDuplicatesReq { mode: DuplicateMode::Exact, hamming: None, root_id: Some(999) }), ErrorKind::NotFound);
     let scoped = env.core.find_duplicates(FindDuplicatesReq { mode: DuplicateMode::Exact, hamming: None, root_id: Some(env.root.id) }).unwrap();
     assert_eq!(scoped, exact);
+    // The dupHamming setting is the default. With the evidence of both pairs agreeing (one text, one
+    // embedding) the hashes alone keep them apart at 6 bits; at 64 the first seed takes all four.
+    for x in [a, a2] {
+        vouch(&env, x, REPORT, &[0.9, 0.3, 0.1]);
+    }
+    assert_eq!(dups(&env, DuplicateMode::Similar, None).groups.len(), 2);
     env.core.set_setting(Caller::Ui, SetSettingReq { key: SettingKey::DupHamming, value: json!(64) }).unwrap();
     let all_one = dups(&env, DuplicateMode::Similar, None);
-    assert_eq!(all_one.groups.len(), 1, "the dupHamming setting is the default: 64 bits = one group of everything");
+    assert_eq!(grouped(&all_one), [id_set(&[a, a2, b, bj])], "64 bits: one group of the four");
     env.core.trash_images(Caller::Ui, ImageIdsReq { image_ids: vec![a2] }).unwrap();
     assert!(dups(&env, DuplicateMode::Exact, None).groups.is_empty(), "trashed images are not proposed again");
 }
@@ -169,7 +209,7 @@ fn low_information_images_are_exact_only_in_duplicates_and_stats() {
         assert!(duplicates::is_low_information(h), "flat fixture {f}: dHash {h:#x} has {} set bits", (h as u64).count_ones());
     }
     let (b, bj) = (id(B_PNG), id(B_JPG));
-    let grouped = |r: &DuplicateResult| r.groups.iter().map(|g| id_set(&g.image_ids)).collect::<Vec<_>>();
+    vouch_reencoded_pair(&env);
 
     // Exact: the flat copy is still found, next to the planted exact pair.
     let exact = grouped(&dups(&env, DuplicateMode::Exact, None));
@@ -196,7 +236,9 @@ fn best_image_reasons() {
         id,
         content_hash: Some("h".into()),
         dhash: Some(0),
-        pixels,
+        phash: Some(0),
+        width: pixels,
+        height: 1,
         taken_ms,
         mtime_ms: 0,
         blur,
@@ -209,6 +251,61 @@ fn best_image_reasons() {
     assert_eq!(best(vec![c(1, 100, 5, None), c(2, 100, 9, None)]), (2, DuplicateReason::Newest));
     assert_eq!(best(vec![c(1, 100, 5, Some(80.0)), c(2, 100, 5, Some(300.0)), c(3, 100, 5, None)]), (2, DuplicateReason::Sharpest));
     assert_eq!(best(vec![c(4, 100, 5, Some(1.0)), c(3, 100, 5, Some(1.0))]), (3, DuplicateReason::Largest), "full tie: lowest id");
+}
+
+const LAYOUT_A: &str = "Screenshot 2026-03-01 090000.png";
+const LAYOUT_B: &str = "Screenshot 2026-03-02 090000.png";
+const SHOT: &str = "Screenshot 2026-03-03 090000.png";
+const SHOT_HALF: &str = "Screenshot 2026-03-04 090000.png";
+
+/// Deferred decision #35, pinned by identity in both directions on indexed images: two same-size images of
+/// one layout whose OCR text differs (an ER diagram with other entity names) are NOT copies, a 50% resize
+/// whose text OCR re-read with small errors IS. Without AI evidence the hashes decide: the same-size pair
+/// counts (hashes cannot tell it apart), the resize does not. Stats count the same groups.
+#[test]
+fn similar_means_near_identical_copies_not_the_same_layout() {
+    let env = Env::new(4);
+    let root = env.root_dir();
+    let layout = noise(600, 300, 7);
+    save(&layout, &root, LAYOUT_A);
+    let mut renamed = layout.clone();
+    for y in 140..148 {
+        for x in 300..316 {
+            renamed.put_pixel(x, y, Rgb([0, 0, 0]));
+        }
+    }
+    save(&renamed, &root, LAYOUT_B);
+    let shot = noise(400, 250, 8);
+    save(&shot, &root, SHOT);
+    save(&image::imageops::resize(&shot, 200, 125, image::imageops::FilterType::Triangle), &root, SHOT_HALF);
+    env.index(true);
+    let id = |n: &str| env.by_name(n).id;
+    let (la, lb, s, half) = (id(LAYOUT_A), id(LAYOUT_B), id(SHOT), id(SHOT_HALF));
+    let bits = |col: &str, x: i64, y: i64| {
+        (env.sql_i64(&format!("SELECT {col} FROM image WHERE id = {x}")) ^ env.sql_i64(&format!("SELECT {col} FROM image WHERE id = {y}"))).count_ones()
+    };
+    for col in ["dhash", "phash"] {
+        assert!(bits(col, la, lb) <= 2, "precondition, {col}: the layout pair is within the hash-only bound ({})", bits(col, la, lb));
+    }
+    assert_ne!(env.sql_i64(&format!("SELECT content_hash = (SELECT content_hash FROM image WHERE id = {lb}) FROM image WHERE id = {la}")), 1);
+    let similar_copies = || dups(&env, DuplicateMode::Similar, None).groups.iter().map(|g| g.image_ids.len() as i64 - 1).sum::<i64>();
+
+    // AI absent: same size + close hashes is all there is to go on.
+    assert_eq!(grouped(&dups(&env, DuplicateMode::Similar, None)), [id_set(&[la, lb])], "no evidence: the resize is not proven");
+    assert_eq!(env.core.get_stats().unwrap().duplicates_similar, 1);
+
+    // AI present: one layout in the embeddings, other names in the text; the resize re-read with errors.
+    vouch(&env, la, "Student\ntakes\nCourse", &[1.0, 0.1, 0.0]);
+    vouch(&env, lb, "Author\nwrites\nBook", &[1.0, 0.11, 0.0]);
+    vouch(&env, s, REPORT, &[0.2, 1.0, 0.1]);
+    vouch(&env, half, REPORT_REREAD, &[0.21, 1.0, 0.1]);
+    for hamming in [None, Some(20), Some(duplicates::MAX_HAMMING)] {
+        let r = dups(&env, DuplicateMode::Similar, hamming);
+        assert_eq!(grouped(&r), [id_set(&[s, half])], "hamming {hamming:?}: the layout pair is not a copy, the resize is");
+        assert_eq!((r.groups[0].best_id, r.groups[0].reason), (s, DuplicateReason::Largest));
+    }
+    assert_eq!(env.core.get_stats().unwrap().duplicates_similar, similar_copies(), "Stats read the same rule");
+    assert_eq!(similar_copies(), 1);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -358,7 +455,9 @@ fn stats_totals_equal_row_counts() {
     assert_eq!(s.duplicates_exact, 1, "one redundant exact copy");
     let similar = dups(&env, DuplicateMode::Similar, None);
     assert_eq!(s.duplicates_similar, similar.groups.iter().map(|g| g.image_ids.len() as i64 - 1).sum::<i64>());
-    assert!(s.duplicates_similar >= 2, "both planted pairs");
+    // Neither planted pair is left (the steps above trashed B_PNG and emptied A_COPY's width), and the
+    // generated fixtures, one drawing routine at several sizes, are no copies of each other.
+    assert_eq!(s.duplicates_similar, 0);
 
     // The wire shape the UI sidebar reads: `get_stats()` (no args) -> `byFolder[].key/count`, counts flattened.
     let wire = serde_json::to_value(&s).unwrap();
