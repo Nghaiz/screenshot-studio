@@ -174,7 +174,7 @@ Re-score (phase 3.4c first rule, superseded by the pixel stage below; 2026-11-24
   backend-only change. The orchestrator's cua-driver re-check then found 5 of the 16 pairs to be different pictures.
 Re-score (phase 3.4c pixel stage, 2026-11-24, after the orchestrator's cua-driver re-check; Deferred decision #35
 updated: `node scripts/accept/p2.mjs` 11/11 PASS in 3 runs and `node scripts/accept/p3.mjs` 22/23 on the installed
-release build, see the last line; counts only):
+release build, then 23/23 on main after a reboot, see the last line; counts only):
 - Real library, `ssctl --data-dir D:\IOT_Tools\data\ScreenshotStudio dupes --mode similar --json`: Hamming 6
   16 groups / 16 copies / largest 2 -> **9 / 9 / 2**, exactly the 9 pixel-identical pairs of the orchestrator's
   list; no member of the 5 pairs of different pictures or of the 2 unverified pairs is in any group. Hamming 20
@@ -204,8 +204,8 @@ release build, see the last line; counts only):
   (`dupes-similar-no-ai`, `dupes-similar`, `smart-view-ready` PASS in all 3 p3 runs); p3's one FAIL is lane-tests'
   `sidecar/tests/test_ocr.py::test_rapidocr_only_pipeline_stays_selectable`, which starts a second real sidecar
   beside the fixture's: it passes alone and failed only while the machine's commit charge stood at ~39 of 47.7 GB
-  (an earlier run logged os error 1455, paging file too small). No sidecar file changed in 3.4c; re-run p3 with
-  memory headroom.
+  (an earlier run logged os error 1455, paging file too small). No sidecar file changed in 3.4c. Re-run on main `1de8739`
+  after a reboot (commit charge 27 of 41.7 GB): p3 23/23 PASS in 8 min 29 s, lane-tests 20/20.
 Not checked: ts-rs 12 `#[ts(type)]` behaviour on Option/Vec fields (from library knowledge; contract_test bans `bigint` to catch it); Tauri raw-body IPC + headers API; `tauri-plugin-drag` version; Rust/Tauri build on this machine (Rust not installed yet); WebView2 CDP attach in a dev build; RapidOCR Vietnamese; OneDrive Files On-Demand state of the 5,604 files (how many are cloud-only); SigLIP i18n quality on Vietnamese queries; NSIS `/D=` with currentUser mode on D:.
 
 ## Finish ETA
