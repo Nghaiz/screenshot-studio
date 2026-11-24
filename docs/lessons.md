@@ -3,6 +3,54 @@
 Non-obvious gotchas found while building Screenshot Studio. Owner rule: lessons stay in this repo, nothing goes
 to a kit. Newest first. One entry: what happened, why, what to do.
 
+## 2026-11-24 — phase 4.3
+
+### A copied file keeps its source's mtime, not its creation time
+- **Seen:** a probe with `fs.copyFileSync` (Win32 `CopyFileW`, what Explorer does) on a file whose mtime was set
+  an hour back: the copy had the same old mtime, but its creation time was the moment of the copy.
+- **Why it matters:** `taken_ms` is filename pattern > created > mtime (`scan/mod.rs`), so `ssctl list --since <t>`
+  still finds a copied screenshot. A rule that read mtime first would file every pasted or copied screenshot at
+  its old date and miss it in "since" queries.
+- **Do:** `p4.mjs` writes the source PNG after `t` anyway and names it without a date, so the live check depends on
+  neither rule. Keep file names in watcher fixtures free of date patterns, or the name decides `taken_ms`.
+
+### No blake3 in Node or the sidecar venv: an independent JS port, checked two ways
+- **Seen:** the plan asks for blake3 before/after hashes of the edit round-trip; `node:crypto` has no BLAKE3 and
+  the venv has no `blake3` module. Reading ss-core's stored `content_hash` alone would let ss-core judge itself.
+- **Do:** `scripts/accept/lib/blake3.mjs` (a transcription of the reference implementation). `p4.mjs` checks it
+  against published vectors (0, 1, 1024, 1025 bytes and "abc", `blake3-selftest`) and against the hash ss-core
+  stored for a 296 KB fixture (`blake3-vs-core`: ~290 chunks, so the tree merging is exercised too).
+
+### A relink of unchanged code gave a different exe: link with `/Brepro`
+- **Seen:** right after a correct install, `p2.mjs` and `p3.mjs` failed `installed-exe`: `p1.mjs`'s own build
+  (`vite build` rewrites `dist/`, tauri-build reruns, the app relinks) differed from the installed exe in 27 bytes,
+  the PE TimeDateStamp (4 places) and the PDB GUID (`RSDS`), with identical code.
+- **Do:** `src-tauri/build.rs` passes `/Brepro` to MSVC `link.exe` for the app's binaries (README Deferred decision
+  #37): both values now come from the content. Checked: a relink after the install kept sha256 `4258b2403a35fa4e`.
+  The comparison stays byte-exact; do not loosen it to ignore headers.
+
+### Do Not Disturb turns a toast into a notification-center entry
+- **Seen:** the watcher's toast never appeared as a banner during the cua-driver check; the notification center
+  (click the clock) listed it ("Screenshot Studio / live copy.png") under "Do not disturb is on".
+- **Do:** look for a toast in the notification center, not only for a banner, before calling it missing.
+
+### `target\` grew to 70 GB in two days: cargo never deletes superseded build outputs
+- **Seen:** the repo took 73 GB, `target\` 70 GB of it: `debug` 45 GB (`debug\build\ss-core` alone 16 GB in
+  138 hash dirs, `screenshot-studio` 8 GB in 59), a one-off `target\verify` 20 GB, `release` 5.9 GB. D: was down to
+  9.6 GB free. DevCache held two more uv caches no env var pointed at (`D:\DevCache\uv`, `uv-cache`, 12 GB).
+- **Why:** every edit, test run or flag change leaves another fingerprinted copy under `build\<crate>\<hash>`
+  (cargo 1.100 groups them per package); cargo has no garbage collection for a target dir.
+- **Do:** `cargo clean` (or delete `target\`) when a phase is done; the cost is one cold release build (~25 min)
+  and ~10 min of debug tests. Stop rust-analyzer first: its proc-macro server keeps proc-macro DLLs under
+  `target\debug\build` loaded, so `rmdir` fails on them. A verification run with its own `CARGO_TARGET_DIR`
+  must delete that dir when it ends.
+
+### rust-analyzer can hold 5 GB of commit; check free commit before a run that starts sidecars
+- **Seen:** before the first full `p4.mjs` run only 5.3 of 44 GB commit was free; rust-analyzer held 5.0 GB. The
+  real CUDA sidecar reserves ~6.7 GB of commit (phase 3.4), and `p3.mjs` already failed once on os error 1455.
+- **Do:** `(Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory` before `p3.mjs` / `p4.mjs`; with the owner's
+  OK, stop rust-analyzer (VS Code restarts it on its own; killing it freed ~5 GB here) or close other heavy apps.
+
 ## 2026-11-24 — phase 3.4c
 
 ### OCR text and embeddings cannot tell one answer choice from another: compare the pixels

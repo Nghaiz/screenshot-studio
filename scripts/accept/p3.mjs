@@ -60,7 +60,7 @@ import path from "node:path";
 import process from "node:process";
 import { connectApp, waitForGrid } from "./lib/cdp.mjs";
 import { INSTALL_DIR, INSTALLED_EXE, installedExeCheck, powershell } from "./lib/install.mjs";
-import { APP_EXE_NAME, ROOT, childEnv, isSidecarRoot, killTree, run, runningPids, ssctl, startApp, treeMemory } from "./lib/run.mjs";
+import { APP_EXE_NAME, ROOT, childEnv, closeApp as closeAppIn, isSidecarRoot, killTree, run, runningPids, ssctl, startApp, treeMemory } from "./lib/run.mjs";
 import { isConsoleWindow, startWindowProbe } from "./lib/windows.mjs";
 
 const PLAN_DIR = path.join(ROOT, "plans", "261123-screenshot-studio");
@@ -319,17 +319,7 @@ function processRows(pids) {
 }
 const stillRunning = (pids) => processRows(pids).map((p) => p.ProcessId);
 
-/** WM_CLOSE (taskkill without /F), then waits for the exe to go. Kills the tree if it does not. */
-async function closeApp(pid) {
-  const t0 = Date.now();
-  run("taskkill", ["/PID", String(pid)]);
-  while (Date.now() - t0 < CLOSE_MAX_MS) {
-    if (!runningPids(APP_EXE_NAME).includes(pid)) return { graceful: true, ms: Date.now() - t0 };
-    await sleep(200);
-  }
-  killTree(pid);
-  return { graceful: false, ms: Date.now() - t0 };
-}
+const closeApp = (pid) => closeAppIn(pid, CLOSE_MAX_MS);
 
 /** Sidecar processes seen so far + the current sidecar subtree of the app, by PID. */
 const mergeProcs = (seen, appPid) => [...new Map([...seen, ...treeMemory(appPid, { exclude: isSidecarRoot }).excluded.procs].map((p) => [p.pid, p])).values()];

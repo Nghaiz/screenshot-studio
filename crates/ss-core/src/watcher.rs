@@ -11,6 +11,10 @@
 //! - A rename inside a root keeps the row (tags, notes, AI results) via [`live::apply_rename`]; a deleted
 //!   or moved-out file is marked `missing`; a folder created, deleted or moved in/out rescans its root.
 //! - Attribute-only changes (OneDrive hydration, pin state, indexer) and access events are ignored.
+//! - Catch-up (phase 4.3): files that arrived while nothing watched (the app closed, or the watcher paused) send no
+//!   event, so the roots watched by the first refresh, and again by the first refresh after a pause, are rescanned
+//!   once. Their new rows get thumbnails and a `library-changed` (`watcher`), but no `new-screenshot`: they are
+//!   not live arrivals. A root added while the watcher runs is indexed by its own job, not here.
 //!
 //! Files the app writes itself (edits, converts, stitches) already have their row when the debounced event
 //! arrives, so they sync as unchanged and are never announced as new screenshots.
@@ -116,6 +120,8 @@ struct Work {
     gone: Vec<(i64, PathBuf)>,
     /// Rows moved by renames.
     moved: Vec<i64>,
+    /// Roots to rescan once because nothing watched them for a while (see the module docs): no `new-screenshot`.
+    catch_up: BTreeSet<i64>,
 }
 
 struct State {
@@ -124,10 +130,12 @@ struct State {
     debouncer: Option<Debouncer<notify::RecommendedWatcher, RecommendedCache>>,
     watched: HashMap<i64, LibraryRoot>,
     pending: HashMap<PathBuf, Pending>,
+    /// The next refresh's newly watched roots are caught up: true at start and after a pause.
+    catch_up_next: bool,
 }
 
 fn run(core: Weak<AppCore>, sink: Arc<dyn EventSink>, rx: mpsc::Receiver<Msg>, events_tx: mpsc::Sender<Msg>, published: Arc<AtomicUsize>) {
-    let mut st = State { sink, events_tx, debouncer: None, watched: HashMap::new(), pending: HashMap::new() };
+    let mut st = State { sink, events_tx, debouncer: None, watched: HashMap::new(), pending: HashMap::new(), catch_up_next: true };
     let mut last_poll: Option<Instant> = None;
     loop {
         let poll_due = last_poll.is_none_or(|t| t.elapsed() >= Duration::from_secs(WATCHER_ROOT_POLL_S));
@@ -137,7 +145,7 @@ fn run(core: Weak<AppCore>, sink: Arc<dyn EventSink>, rx: mpsc::Receiver<Msg>, e
         match msg {
             Ok(Msg::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Ok(Msg::Refresh) => {
-                st.refresh(&core);
+                work.catch_up.extend(st.refresh(&core));
                 published.store(st.watched.len(), Ordering::SeqCst);
                 last_poll = Some(Instant::now());
             }
@@ -183,20 +191,24 @@ impl State {
         core.catalog.read(|c| catalog::get_setting(c, SettingKey::WatcherEnabled)).map(|v| v.as_bool().unwrap_or(true)).unwrap_or(true)
     }
 
-    /// Re-reads `watcherEnabled` and the roots; (un)watches to match.
-    fn refresh(&mut self, core: &AppCore) {
+    /// Re-reads `watcherEnabled` and the roots; (un)watches to match. Returns the roots to catch up.
+    fn refresh(&mut self, core: &AppCore) -> Vec<i64> {
         if !Self::enabled(core) {
             if self.debouncer.take().is_some() {
                 eprintln!("ss-core watcher: paused (watcherEnabled = false)");
             }
             self.watched.clear();
             self.pending.clear();
+            self.catch_up_next = true;
             core.set_warning(AppWarningCode::WatcherFailed, None);
-            return;
+            return Vec::new();
         }
         let roots = match core.catalog.read(catalog::list_roots) {
             Ok(r) => r,
-            Err(e) => return log_err("cannot read the library roots", &e),
+            Err(e) => {
+                log_err("cannot read the library roots", &e);
+                return Vec::new();
+            }
         };
         if self.debouncer.is_none() {
             let tx = self.events_tx.clone();
@@ -208,7 +220,7 @@ impl State {
                     let msg = format!("the folder watcher could not start: {e}");
                     eprintln!("ss-core watcher: {msg}");
                     core.set_warning(AppWarningCode::WatcherFailed, Some(msg));
-                    return;
+                    return Vec::new();
                 }
             }
         }
@@ -222,6 +234,7 @@ impl State {
             self.pending.retain(|_, p| p.root_id != id);
         }
         let mut failures = Vec::new();
+        let mut newly = Vec::new();
         for (id, root) in wanted {
             if self.watched.contains_key(&id) {
                 continue;
@@ -229,6 +242,7 @@ impl State {
             match debouncer.watch(Path::new(&root.path), RecursiveMode::Recursive) {
                 Ok(()) => {
                     self.watched.insert(id, root);
+                    newly.push(id);
                 }
                 Err(e) => failures.push(format!("{}: {e}", root.path)),
             }
@@ -240,6 +254,7 @@ impl State {
             eprintln!("ss-core watcher: {msg}");
             core.set_warning(AppWarningCode::WatcherFailed, Some(msg));
         }
+        if std::mem::take(&mut self.catch_up_next) { newly } else { Vec::new() }
     }
 
     fn root_of(&self, path: &Path) -> Option<&LibraryRoot> {
@@ -377,7 +392,7 @@ impl State {
         for (root, path) in self.ready(core).into_iter().chain(std::mem::take(&mut work.gone)) {
             by_root.entry(root).or_default().push(path);
         }
-        if by_root.is_empty() && work.rescan.is_empty() && work.moved.is_empty() {
+        if by_root.is_empty() && work.rescan.is_empty() && work.moved.is_empty() && work.catch_up.is_empty() {
             return;
         }
         let auto_cloud = core
@@ -389,7 +404,7 @@ impl State {
         let mut changed = work.moved;
         let mut refetch_all = false;
         for (root_id, paths) in by_root {
-            if work.rescan.contains(&root_id) {
+            if work.rescan.contains(&root_id) || work.catch_up.contains(&root_id) {
                 continue; // the rescan covers them
             }
             let Some(root) = self.watched.get(&root_id) else { continue };
@@ -407,6 +422,14 @@ impl State {
             match rescan(core, &root, auto_cloud) {
                 Ok(ids) => added.extend(ids),
                 Err(e) => log_err(&format!("rescan {}", root.path), &e),
+            }
+            refetch_all = true;
+        }
+        for root_id in work.catch_up.difference(&work.rescan) {
+            let Some(root) = self.watched.get(root_id).cloned() else { continue };
+            // New rows are thumbnailed by `rescan` and covered by the refetch below; never announced.
+            if let Err(e) = rescan(core, &root, auto_cloud) {
+                log_err(&format!("catch-up {}", root.path), &e);
             }
             refetch_all = true;
         }
