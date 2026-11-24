@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::contract::ipc::events::JOB_PROGRESS_MAX_PER_SEC;
-use crate::contract::ipc::{JobKind, JobProgress, LibraryChanged};
+use crate::contract::ipc::{JobKind, JobProgress, LibraryChanged, NewScreenshot};
 use crate::contract::{AppError, ErrorKind};
 use crate::errors::not_found;
 
@@ -15,6 +15,9 @@ use crate::errors::not_found;
 pub trait EventSink: Send + Sync {
     fn job_progress(&self, p: &JobProgress);
     fn library_changed(&self, c: &LibraryChanged);
+    /// Files the live watcher indexed as new, in one batch (the Tauri sink emits one `new-screenshot` per
+    /// item and shows one toast per batch). Default: dropped.
+    fn new_screenshots(&self, _items: &[NewScreenshot]) {}
 }
 
 /// Drops every event.

@@ -54,6 +54,10 @@ pub struct AppCore {
     pub(crate) sidecar_layout: Mutex<Option<SidecarLayout>>,
     /// A fixed launch replacing the settings-based one (tests, [`AppCore::start_sidecar_with`]).
     pub(crate) sidecar_launch: Mutex<Option<SidecarLaunch>>,
+    /// `AppInfo.warnings` (hotkey, watcher), set by the shell and the watcher (`app_live.rs`).
+    pub(crate) warnings: Mutex<Vec<AppWarning>>,
+    /// The live folder watcher while it runs (`app_live.rs`).
+    pub(crate) watcher: Mutex<Option<crate::watcher::WatcherHandle>>,
 }
 
 impl AppCore {
@@ -67,6 +71,8 @@ impl AppCore {
             semantic: SemanticIndex::default(),
             sidecar_layout: Mutex::new(None),
             sidecar_launch: Mutex::new(None),
+            warnings: Mutex::new(Vec::new()),
+            watcher: Mutex::new(None),
         }))
     }
 
@@ -90,16 +96,20 @@ impl AppCore {
             data_dir: self.data_dir().to_string_lossy().into_owned(),
             library_roots: self.catalog.read(catalog::list_roots)?,
             sidecar: self.sidecar.status(),
-            warnings: Vec::new(),
+            warnings: self.warnings(),
         })
     }
 
     pub fn add_library_root(&self, caller: Caller, req: AddLibraryRootReq) -> Result<LibraryRoot, AppError> {
-        ops::add_library_root(caller, &self.catalog, req)
+        let r = ops::add_library_root(caller, &self.catalog, req)?;
+        self.refresh_watcher();
+        Ok(r)
     }
 
     pub fn remove_library_root(&self, caller: Caller, req: RemoveLibraryRootReq) -> Result<OpResult, AppError> {
-        ops::remove_library_root(caller, &self.catalog, req)
+        let r = ops::remove_library_root(caller, &self.catalog, req)?;
+        self.refresh_watcher();
+        Ok(r)
     }
 
     pub fn get_settings(&self) -> Result<SettingsMap, AppError> {
@@ -107,7 +117,12 @@ impl AppCore {
     }
 
     pub fn set_setting(&self, caller: Caller, req: SetSettingReq) -> Result<(), AppError> {
-        ops::set_setting(caller, &self.catalog, req)
+        let key = req.key;
+        ops::set_setting(caller, &self.catalog, req)?;
+        if key == SettingKey::WatcherEnabled {
+            self.refresh_watcher();
+        }
+        Ok(())
     }
 
     /// `textMode` `semantic` / `any` add the semantic arm when the sidecar is ready (`app_smart.rs`).
@@ -221,8 +236,11 @@ impl AppCore {
     pub fn delete_tokens(&self) -> &DeleteTokens {
         &self.delete_tokens
     }
+    /// Undoes one batch; an undone edit/convert overwrite gets its thumbnails and hashes made again.
     pub fn undo(&self, caller: Caller, req: UndoReq) -> Result<OpResult, AppError> {
-        journal::undo(caller, &self.catalog, req)
+        let (r, rethumb) = journal::undo_detailed(caller, &self.catalog, req)?;
+        self.after_content_change(&rethumb);
+        Ok(r)
     }
     pub fn list_journal(&self, req: LimitReq) -> Result<JournalPage, AppError> {
         journal::list_journal(&self.catalog, req)
@@ -327,7 +345,7 @@ impl AppCore {
         let on_batch = |ids: Vec<i64>| {
             sink.library_changed(&LibraryChanged { reason: LibraryChangeReason::Indexed, image_ids: Some(ids) })
         };
-        thumbs::thumb_pass(&self.catalog, self.fa.as_ref(), &ThumbScope { root_id, allow_cloud }, cancel, &progress, &on_batch)
+        thumbs::thumb_pass(&self.catalog, self.fa.as_ref(), &ThumbScope { root_id, allow_cloud, ids: None }, cancel, &progress, &on_batch)
     }
 
     fn auto_download_cloud_only(&self) -> Result<bool, AppError> {

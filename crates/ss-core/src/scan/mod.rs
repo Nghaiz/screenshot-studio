@@ -3,6 +3,7 @@
 //! dimensions from the header of local files. Cloud-only files are listed from metadata and never
 //! opened (contract-tauri-ipc rule 9).
 
+pub mod live;
 pub mod patterns;
 
 use std::collections::HashMap;
@@ -257,6 +258,8 @@ struct BatchDelta {
     added: i64,
     updated: i64,
     missing: i64,
+    /// Ids of the rows `added` counts (the live watcher announces them as new screenshots).
+    added_ids: Vec<i64>,
 }
 
 fn write_batch(
@@ -295,6 +298,7 @@ fn write_batch(
                 let id = tx.last_insert_rowid();
                 catalog::fts_insert(tx, id, &f.file_name)?;
                 d.added += 1;
+                d.added_ids.push(id);
             }
             Change::Changed(id, f, dims) => {
                 let taken = patterns::parse_file_name(&f.file_name).map(|t| t.to_sqlite());

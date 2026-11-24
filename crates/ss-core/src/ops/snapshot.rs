@@ -27,6 +27,8 @@ const CHILDREN: [(&str, Option<(&str, &str)>); 5] = [
     ("image_tag", Some(("tag_id", "tag"))),
     ("album_image", Some(("album_id", "album"))),
 ];
+/// Child tables derived from the pixels (AI results): an overwrite edit drops them, its undo puts them back.
+pub(crate) const AI_TABLES: [&str; 3] = ["ocr_result", "embedding", "category"];
 const PARKED_DIR: &str = "parked";
 const BLOB_KEY: &str = "$blob";
 
@@ -171,6 +173,28 @@ pub(crate) fn restore(tx: &Transaction<'_>, snap: &Snapshot, data_dir: &Path, ba
         rusqlite::params![id, crate::filter::fts_ocr_text(&ocr.unwrap_or_default())],
     )?;
     Ok(id)
+}
+
+/// The AI rows of `id` ([`AI_TABLES`]), as an overwrite edit keeps them for its undo.
+pub(crate) fn take_ai(conn: &Connection, id: i64) -> Result<BTreeMap<String, Vec<Map<String, Json>>>, AppError> {
+    let mut out = BTreeMap::new();
+    for table in AI_TABLES {
+        out.insert(table.to_owned(), rows(conn, table, "image_id", id)?);
+    }
+    Ok(out)
+}
+
+/// Replaces the AI rows of `id` with `ai` (from [`take_ai`]).
+pub(crate) fn restore_ai(tx: &Transaction<'_>, id: i64, ai: &BTreeMap<String, Vec<Map<String, Json>>>) -> Result<(), AppError> {
+    for table in AI_TABLES {
+        tx.execute(&format!("DELETE FROM {table} WHERE image_id = ?1"), [id])?;
+        for row in ai.get(table).into_iter().flatten() {
+            let mut row = row.clone();
+            row.insert("image_id".into(), Json::from(id));
+            insert(tx, table, &row)?;
+        }
+    }
+    Ok(())
 }
 
 fn parked_path(data_dir: &Path, batch: i64, id: i64, width: i64) -> PathBuf {

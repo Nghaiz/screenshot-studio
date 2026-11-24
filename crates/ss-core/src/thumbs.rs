@@ -55,6 +55,8 @@ pub struct ThumbScope {
     /// When false (background passes), cloud-only files are never opened: they become `offline`.
     /// True only for `download_cloud_only` or the `autoDownloadCloudOnly` setting.
     pub allow_cloud: bool,
+    /// Only these images (None = every `pending` row of the scope): the watcher and the edit commands.
+    pub ids: Option<Vec<i64>>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
@@ -108,6 +110,13 @@ pub fn thumb_pass(
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     })?;
+    let items: Vec<Item> = match &scope.ids {
+        Some(ids) => {
+            let want: std::collections::HashSet<i64> = ids.iter().copied().collect();
+            items.into_iter().filter(|i| want.contains(&i.id)).collect()
+        }
+        None => items,
+    };
 
     let total = items.len() as i64;
     let done = AtomicI64::new(0);
@@ -261,6 +270,16 @@ pub fn render_preview(data_dir: &Path, fa: &dyn FileAccess, id: i64, abs: &Path)
     let webp = encode_thumb(img.into_rgb8(), THUMB_PREVIEW as u32)?;
     write_atomic(&paths::thumb_path(data_dir, id, THUMB_PREVIEW), &webp).map_err(|e| e.to_string())?;
     Ok(webp)
+}
+
+/// Thumbnails (and hashes, dimensions, blur score) of the `pending` rows among `ids`, on the calling thread.
+/// `allow_cloud`: an explicit user action on these images may open a cloud-only file (rule 9).
+pub fn thumb_ids(cat: &Catalog, fa: &dyn FileAccess, ids: &[i64], allow_cloud: bool) -> Result<ThumbReport, AppError> {
+    if ids.is_empty() {
+        return Ok(ThumbReport::default());
+    }
+    let scope = ThumbScope { root_id: None, allow_cloud, ids: Some(ids.to_vec()) };
+    thumb_pass(cat, fa, &scope, &AtomicBool::new(false), &|_, _, _| {}, &|_| {})
 }
 
 /// Deletes both cached thumbnails of an image (best effort: they are a cache).

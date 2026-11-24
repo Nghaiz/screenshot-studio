@@ -1,8 +1,9 @@
 //! File primitives of the 2.1 write APIs: no-overwrite move/copy, the OS Recycle Bin, and
 //! [`FileAction`], a done file step that can be reversed when its DB step fails.
 
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::contract::{AppError, ErrorKind};
 use crate::errors::internal;
@@ -46,6 +47,63 @@ pub(crate) fn copy_file(from: &Path, to: &Path) -> io::Result<()> {
         return Err(exists_err(to));
     }
     std::fs::copy(from, to).map(|_| ())
+}
+
+/// `.<name>.<pid>-<seq>.ss-tmp` next to `target`: no image extension, so neither the scanner nor the live
+/// watcher ever indexes a half-written file.
+pub(crate) fn tmp_beside(target: &Path) -> PathBuf {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = format!(".{name}.{}-{}.ss-tmp", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed));
+    target.with_file_name(tmp)
+}
+
+/// Writes `bytes` and flushes them to disk (`FlushFileBuffers`) before returning.
+pub(crate) fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut f = std::fs::File::create(path)?;
+    f.write_all(bytes)?;
+    f.sync_all()
+}
+
+/// Writes `bytes` to a temp file beside `target`, syncs it, then renames it over `target`
+/// (`MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`): readers see the old or the new file, never half of one.
+pub(crate) fn replace_with(target: &Path, bytes: &[u8]) -> io::Result<()> {
+    let tmp = tmp_beside(target);
+    let r = write_synced(&tmp, bytes).and_then(|_| std::fs::rename(&tmp, target));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
+}
+
+/// Like [`replace_with`] for a file that must not exist yet.
+pub(crate) fn create_new_with(target: &Path, bytes: &[u8]) -> io::Result<()> {
+    if target.exists() {
+        return Err(exists_err(target));
+    }
+    replace_with(target, bytes)
+}
+
+/// Copies `src` to `backup` (timestamps kept) and flushes the copy to disk: the backup of an overwrite is
+/// durable before the original is touched (phase 4.1 risk "overwrite loses the original").
+pub(crate) fn backup_copy(src: &Path, backup: &Path) -> io::Result<()> {
+    if let Some(dir) = backup.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::copy(src, backup)?;
+    std::fs::OpenOptions::new().write(true).open(backup)?.sync_all()
+}
+
+/// Puts the bytes of `backup` back at `target` (replacing it), through a synced temp copy beside `target`.
+pub(crate) fn restore_from_backup(backup: &Path, target: &Path) -> io::Result<()> {
+    let tmp = tmp_beside(target);
+    let r = std::fs::copy(backup, &tmp)
+        .and_then(|_| std::fs::OpenOptions::new().write(true).open(&tmp)?.sync_all())
+        .and_then(|_| std::fs::rename(&tmp, target));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
 }
 
 /// Runs `f` on a new thread. The `trash` crate initializes COM per thread and panics when the
@@ -150,6 +208,9 @@ pub(crate) enum FileAction {
     Copied { to: PathBuf },
     Recycled { path: PathBuf, from_s: i64, to_s: i64 },
     Unrecycled { path: PathBuf },
+    /// An edit/convert overwrite: `orig` was backed up to `backup`, then replaced by `new` (same path, or
+    /// a new extension with `orig` removed).
+    Overwritten { orig: PathBuf, new: PathBuf, backup: PathBuf },
 }
 
 impl FileAction {
@@ -161,6 +222,14 @@ impl FileAction {
             FileAction::Copied { to } => std::fs::remove_file(to).map_err(AppError::from),
             FileAction::Recycled { path, from_s, to_s } => unrecycle(path, *from_s, *to_s),
             FileAction::Unrecycled { path } => recycle(path).map(|_| ()),
+            FileAction::Overwritten { orig, new, backup } => (|| {
+                restore_from_backup(backup, orig)?;
+                if !same_file(orig, new) {
+                    std::fs::remove_file(new)?;
+                }
+                std::fs::remove_file(backup)
+            })()
+            .map_err(AppError::from),
         };
         if let Err(e) = r {
             eprintln!("ss-core: could not reverse {self:?}: {}: {}", e.message, e.detail.unwrap_or_default());

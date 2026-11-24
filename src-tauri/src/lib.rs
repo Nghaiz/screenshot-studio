@@ -1,26 +1,31 @@
 //! Screenshot Studio Tauri shell: plugins, the `ss-core` app state, the main window (WebView2 profile in the
 //! data dir), the async `ssimg` scheme (served off the main thread), the AI sidecar (started after the window,
-//! status pushed as `sidecar-status`, stopped on exit) and every contract command (contract_test.rs (e) checks
-//! this handler list).
+//! status pushed as `sidecar-status`, stopped on exit), the phase 4.1 live features (folder watcher + toast,
+//! tray + recent, global hotkey, autostart, `open-image` on a second launch) and every contract command
+//! (contract_test.rs (e) checks this handler list).
 
 mod commands;
+mod live;
 mod state;
+mod tray;
 mod window;
 
 use commands::{ai, edit, fileops, library, organize, query};
+use std::sync::Arc;
+
 use ss_core::AppCore;
 use ss_core::contract::ipc::{events, ssimg};
 use ss_core::sidecar::SidecarLayout;
 use tauri::{Emitter, Manager};
 
-use state::{AppState, http_response};
+use state::{AppState, TauriSink, http_response};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         // single-instance MUST be the first plugin (plugin docs). A second launch exits and focuses this
-        // instance's window; forwarding a file argument as `open-image` lands in 4.1.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| window::focus_main(app)))
+        // instance's window; a file argument inside a library root is opened (`open-image`).
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| live::second_instance(app, argv)))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -47,8 +52,24 @@ pub fn run() {
                 }
             });
             app.manage(AppState { core: core.clone() });
+            app.manage(live::HotkeyState::default());
             // After `manage`: the page's first command or `ssimg` request must find the state.
             window::create_main(app, &data_dir)?;
+            let handle = app.handle();
+            live::init_toast_clicks(handle);
+            tray::create(handle)?;
+            live::reconcile_autostart(handle);
+            let hotkey = core
+                .get_settings()
+                .ok()
+                .and_then(|s| s.0.get("hotkey").and_then(|v| v.as_str().map(str::to_owned)))
+                .unwrap_or_else(|| "Ctrl+Alt+S".into());
+            live::apply_hotkey(handle, &hotkey);
+            // Follows `watcherEnabled` and the roots by itself; a watch failure is the `watcherFailed` warning.
+            if let Err(e) = core.start_watcher(Arc::new(TauriSink { app: handle.clone() })) {
+                eprintln!("screenshot-studio: watcher: {}: {}", e.message, e.detail.clone().unwrap_or_default());
+                core.set_warning(ss_core::contract::ipc::AppWarningCode::WatcherFailed, Some(e.message));
+            }
             // Absent venv = state `absent`, nothing spawned; the app works the same minus AI (D6).
             if let Err(e) = core.start_sidecar() {
                 eprintln!("screenshot-studio: sidecar: {}: {}", e.message, e.detail.unwrap_or_default());
@@ -129,6 +150,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 // `shutdown`, then a kill after the shutdown wait (contract § Lifecycle 4).
                 if let Some(state) = app.try_state::<AppState>() {
+                    state.core.stop_watcher();
                     state.core.shutdown_sidecar();
                 }
             }

@@ -1,5 +1,6 @@
 //! The main window: created in `setup` (not from config) so its WebView2 profile lives in the app's data dir,
-//! and brought to the front when a second instance starts (phase 2.3).
+//! brought to the front when a second instance starts (phase 2.3) or the hotkey fires (phase 4.1), and
+//! quits the app when it closes.
 
 use std::path::{Path, PathBuf};
 
@@ -30,6 +31,14 @@ pub fn create_main(app: &App, data_dir: &Path) -> Result<(), Box<dyn std::error:
     let window = WebviewWindowBuilder::from_config(app.handle(), &config)?
         .data_directory(webview_data_dir(data_dir))
         .build()?;
+    // Closing the main window quits the app (p2 `close`: WM_CLOSE ends the app within 10 s), even while the
+    // hidden tray popup window (phase 4.1) still exists and would otherwise keep the event loop alive.
+    let handle = app.handle().clone();
+    window.on_window_event(move |e| {
+        if let tauri::WindowEvent::Destroyed = e {
+            handle.exit(0);
+        }
+    });
     #[cfg(windows)]
     hold_low_memory_target(&window);
     Ok(())

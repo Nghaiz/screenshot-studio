@@ -15,6 +15,7 @@ use crate::contract::ipc::*;
 use crate::contract::{AppError, Caller, ErrorKind};
 use crate::errors::{enum_str, internal, invalid, not_found, now_ms, parse_enum};
 
+use super::edit::{self, ConvertPayload, OverwritePayload};
 use super::fsio::{self, FileAction};
 use super::snapshot::{self, Snapshot};
 use super::{failure, guard_file_write};
@@ -248,6 +249,12 @@ fn payload<T: DeserializeOwned>(r: &Row) -> Result<T, AppError> {
 
 /// Reverts one batch (`batchId: null` = the latest batch with rows not undone yet).
 pub fn undo(caller: Caller, cat: &Catalog, req: UndoReq) -> Result<OpResult, AppError> {
+    undo_detailed(caller, cat, req).map(|(r, _)| r)
+}
+
+/// [`undo`], plus the ids whose file content changed back (an undone edit/convert overwrite): their
+/// thumbnails and hashes must be made again by the caller ([`crate::thumbs::thumb_ids`]).
+pub(crate) fn undo_detailed(caller: Caller, cat: &Catalog, req: UndoReq) -> Result<(OpResult, Vec<i64>), AppError> {
     let batch = match req.batch_id {
         Some(b) => b,
         None => cat
@@ -319,10 +326,14 @@ pub fn undo(caller: Caller, cat: &Catalog, req: UndoReq) -> Result<OpResult, App
         }
     };
     let mut affected = 0;
+    let mut rethumb = Vec::new();
     for (res, (r, action)) in results.into_iter().zip(&ready) {
         match res {
             Ok(after) => {
                 affected += 1;
+                if let After::Edited { id, .. } = &after {
+                    rethumb.push(*id);
+                }
                 after.run(cat.data_dir(), batch);
             }
             Err(e) => {
@@ -331,7 +342,29 @@ pub fn undo(caller: Caller, cat: &Catalog, req: UndoReq) -> Result<OpResult, App
             }
         }
     }
-    Ok(OpResult { batch_id: Some(batch), affected, failed })
+    Ok((OpResult { batch_id: Some(batch), affected, failed }, rethumb))
+}
+
+fn copy_file_undo(caller: Caller, roots: &[LibraryRoot], p: &CopyPayload) -> Result<FileAction, AppError> {
+    let to = PathBuf::from(&p.to_abs);
+    guard_file_write(caller, roots, &[&to])?;
+    let meta = std::fs::metadata(&to)?;
+    let mtime = meta.modified().ok().and_then(crate::errors::system_time_ms).unwrap_or(0);
+    if meta.len() as i64 != p.size_bytes || mtime != p.mtime_ms {
+        return Err(AppError::new(ErrorKind::Conflict, format!("the copy {} changed since; not deleted", to.display())));
+    }
+    std::fs::remove_file(&to)?;
+    Ok(FileAction::None)
+}
+
+fn copy_db_undo(tx: &Transaction<'_>, p: &CopyPayload) -> Result<After, AppError> {
+    match p.new_image_id {
+        Some(new_id) => {
+            snapshot::remove(tx, new_id)?;
+            Ok(After::DropThumbs(new_id))
+        }
+        None => Ok(After::None),
+    }
 }
 
 fn file_undo(caller: Caller, roots: &[LibraryRoot], r: &Row) -> Result<FileAction, AppError> {
@@ -343,18 +376,7 @@ fn file_undo(caller: Caller, roots: &[LibraryRoot], r: &Row) -> Result<FileActio
             fsio::move_file(&to, &from)?;
             FileAction::Moved { from: to, to: from }
         }
-        JournalOp::Copy => {
-            let p: CopyPayload = payload(r)?;
-            let to = PathBuf::from(&p.to_abs);
-            guard_file_write(caller, roots, &[&to])?;
-            let meta = std::fs::metadata(&to)?;
-            let mtime = meta.modified().ok().and_then(crate::errors::system_time_ms).unwrap_or(0);
-            if meta.len() as i64 != p.size_bytes || mtime != p.mtime_ms {
-                return Err(AppError::new(ErrorKind::Conflict, format!("the copy {} changed since; not deleted", to.display())));
-            }
-            std::fs::remove_file(&to)?;
-            FileAction::None
-        }
+        JournalOp::Copy => copy_file_undo(caller, roots, &payload(r)?)?,
         JournalOp::Rename => {
             let p: RenamePayload = payload(r)?;
             let dir = PathBuf::from(&p.dir);
@@ -370,9 +392,11 @@ fn file_undo(caller: Caller, roots: &[LibraryRoot], r: &Row) -> Result<FileActio
             fsio::unrecycle(&path, p.deleted_from_s, p.deleted_to_s)?;
             FileAction::Unrecycled { path }
         }
-        JournalOp::EditOverwrite | JournalOp::Convert => {
-            return Err(AppError::not_implemented().with_detail("undo of edits lands in phase 4.1"));
-        }
+        JournalOp::EditOverwrite => edit::overwrite_file_undo(caller, roots, &payload(r)?)?,
+        JournalOp::Convert => match payload::<ConvertPayload>(r)? {
+            ConvertPayload::Copy(p) => copy_file_undo(caller, roots, &p)?,
+            ConvertPayload::Overwrite(p) => edit::overwrite_file_undo(caller, roots, &p)?,
+        },
         _ => FileAction::None,
     })
 }
@@ -382,6 +406,8 @@ enum After {
     None,
     Unpark { old: i64, new: i64 },
     DropThumbs(i64),
+    /// An undone overwrite: the old thumbnails are stale (the caller regenerates them) and the backup is spent.
+    Edited { id: i64, backup: PathBuf },
 }
 
 impl After {
@@ -390,6 +416,12 @@ impl After {
             After::None => {}
             After::Unpark { old, new } => snapshot::unpark_thumbs(data_dir, batch, old, new),
             After::DropThumbs(id) => crate::thumbs::remove_thumbs(data_dir, id),
+            After::Edited { id, backup } => {
+                crate::thumbs::remove_thumbs(data_dir, id);
+                if let Err(e) = std::fs::remove_file(&backup) {
+                    eprintln!("ss-core: could not remove the edit backup {}: {e}", backup.display());
+                }
+            }
         }
     }
 }
@@ -470,12 +502,18 @@ fn db_undo(tx: &Transaction<'_>, r: &Row, data_dir: &Path, batch: i64) -> Result
                 }
             }
         }
-        JournalOp::Copy => {
-            let p: CopyPayload = payload(r)?;
-            if let Some(new_id) = p.new_image_id {
-                snapshot::remove(tx, new_id)?;
-                return Ok(After::DropThumbs(new_id));
-            }
+        JournalOp::Copy => return copy_db_undo(tx, &payload(r)?),
+        JournalOp::EditOverwrite | JournalOp::Convert => {
+            let over = match r.op {
+                JournalOp::EditOverwrite => payload::<OverwritePayload>(r)?,
+                _ => match payload::<ConvertPayload>(r)? {
+                    ConvertPayload::Copy(p) => return copy_db_undo(tx, &p),
+                    ConvertPayload::Overwrite(p) => p,
+                },
+            };
+            let id = id.ok_or_else(|| internal("edit journal row without an image"))?;
+            edit::overwrite_db_undo(tx, id, &over)?;
+            return Ok(After::Edited { id, backup: PathBuf::from(&over.backup) });
         }
         JournalOp::Rename => {
             let p: RenamePayload = payload(r)?;
@@ -487,7 +525,7 @@ fn db_undo(tx: &Transaction<'_>, r: &Row, data_dir: &Path, batch: i64) -> Result
             let new = snapshot::restore(tx, &p.snapshot, data_dir, batch)?;
             return Ok(After::Unpark { old: p.snapshot.id()?, new });
         }
-        JournalOp::Purge | JournalOp::EditOverwrite | JournalOp::Convert => {
+        JournalOp::Purge => {
             return Err(invalid(format!("journal op {} cannot be undone here", enum_str(&r.op))));
         }
     }

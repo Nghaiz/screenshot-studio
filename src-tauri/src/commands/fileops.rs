@@ -1,12 +1,14 @@
-//! File ops, permanent delete and undo. Thin wrappers over `ss_core::AppCore` (writes as
+//! File ops, permanent delete, undo, export jobs and the clipboard image. Thin wrappers over `ss_core::AppCore` (writes as
 //! `Caller::Ui`); successful changes emit `library-changed` (`fileOp`, or `undo`).
 
-use ss_core::contract::ipc::*;
-use ss_core::contract::{AppError, Caller};
-use tauri::{AppHandle, State};
+use std::sync::Arc;
 
-use super::not_implemented;
-use crate::state::{AppState, blocking, emit_changed};
+use ss_core::contract::ipc::*;
+use ss_core::contract::{AppError, Caller, ErrorKind};
+use tauri::{AppHandle, State};
+use tauri_plugin_clipboard_manager::ClipboardExt;
+
+use crate::state::{AppState, TauriSink, blocking, emit_changed};
 
 /// Runs a file op and announces a refetch (rows may have left or joined the library).
 async fn file_op<F>(state: State<'_, AppState>, app: AppHandle, reason: LibraryChangeReason, f: F) -> Result<OpResult, AppError>
@@ -67,19 +69,23 @@ pub async fn undo(req: UndoReq, state: State<'_, AppState>, app: AppHandle) -> R
 }
 
 #[tauri::command]
-pub async fn export_zip(req: ExportZipReq) -> Result<JobStarted, AppError> {
-    let _ = req;
-    not_implemented("export_zip", "4.1")
+pub async fn export_zip(req: ExportZipReq, state: State<'_, AppState>, app: AppHandle) -> Result<JobStarted, AppError> {
+    let core = state.core.clone();
+    blocking(move || core.start_export_zip(Caller::Ui, req, Arc::new(TauriSink { app }))).await
 }
 
 #[tauri::command]
-pub async fn export_pdf(req: ExportPdfReq) -> Result<JobStarted, AppError> {
-    let _ = req;
-    not_implemented("export_pdf", "4.1")
+pub async fn export_pdf(req: ExportPdfReq, state: State<'_, AppState>, app: AppHandle) -> Result<JobStarted, AppError> {
+    let core = state.core.clone();
+    blocking(move || core.start_export_pdf(Caller::Ui, req, Arc::new(TauriSink { app }))).await
 }
 
+/// Decodes the image to RGBA in `ss-core` and hands it to the clipboard-manager plugin.
 #[tauri::command]
-pub async fn copy_image_to_clipboard(req: ImageIdReq) -> Result<(), AppError> {
-    let _ = req;
-    not_implemented("copy_image_to_clipboard", "4.1")
+pub async fn copy_image_to_clipboard(req: ImageIdReq, state: State<'_, AppState>, app: AppHandle) -> Result<(), AppError> {
+    let core = state.core.clone();
+    let (rgba, w, h) = blocking(move || core.image_rgba(req)).await?;
+    app.clipboard()
+        .write_image(&tauri::image::Image::new_owned(rgba, w, h))
+        .map_err(|e| AppError::new(ErrorKind::Io, "could not copy the image to the clipboard").with_detail(e.to_string()))
 }

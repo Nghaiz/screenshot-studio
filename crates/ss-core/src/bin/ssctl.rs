@@ -44,6 +44,12 @@ Subcommands (phase 3.2, AI sidecar from the sidecarVenv / aiDevice settings):
   dupes --mode exact|similar [--hamming N] [--root <rootId>]
                                          duplicate groups, best first; prints the find_duplicates result
 
+Subcommands (phase 4.1, file writes; refused under a protected root or a OneDrive path):
+  edit <id> --crop x,y,w,h --mode copy|overwrite
+                                         crop and save as a copy (`<name> (edited).<ext>`) or over the
+                                         original (backup kept, undoable); prints { image, batchId }
+  undo <batchId>                         undo one journal batch (the id is required); prints OpResult
+
 Global flags:
   --data-dir <path>   data dir (else SS_DATA_DIR, else D:\\IOT_Tools\\data\\ScreenshotStudio)
   --json              compact one-line JSON on stdout
@@ -208,6 +214,24 @@ fn run(args: &mut Vec<String>) -> Result<Value, Failure> {
             let page = core.query_images(&q);
             core.shutdown_sidecar();
             json(page?)
+        }
+        "edit" => {
+            let crop = take_value(args, "--crop")?.ok_or_else(|| usage("edit needs --crop x,y,w,h"))?;
+            let mode = take_value(args, "--mode")?.ok_or_else(|| usage("edit needs --mode copy|overwrite"))?;
+            let mode: EditMode = serde_json::from_value(Value::String(mode.clone()))
+                .map_err(|_| usage(format!("--mode must be copy|overwrite, got `{mode}`")))?;
+            let n: Vec<i64> = crop.split(',').map(|v| parse_int(v.trim(), "--crop")).collect::<Result<_, _>>()?;
+            let [x, y, width, height] = n[..] else {
+                return Err(usage(format!("--crop needs 4 numbers x,y,w,h, got `{crop}`")));
+            };
+            let id = parse_int(&one_positional(args, "<id>")?, "<id>")?;
+            let crop = ss_core::ops::CropRect { x, y, width, height };
+            json(open()?.crop_image(Caller::Cli, id, crop, mode)?)
+        }
+        "undo" => {
+            // The batch id is required: the CLI never undoes "the latest" batch (design-intent.md).
+            let batch_id = parse_int(&one_positional(args, "<batchId>")?, "<batchId>")?;
+            json(open()?.undo(Caller::Cli, UndoReq { batch_id: Some(batch_id) })?)
         }
         "journal" => {
             let limit = take_value(args, "--limit")?.map(|v| parse_int(&v, "--limit")).transpose()?.unwrap_or(50);
