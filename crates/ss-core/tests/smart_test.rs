@@ -1,8 +1,9 @@
 //! Phase 3.2: the sidecar-free smart features. A planted exact copy and a re-encoded (smaller JPEG) near
 //! copy are grouped with the right best image; sessions split at the gap; a blurry image is flagged from
 //! its 320 thumbnail (scored in the thumbnail pass and backfilled for older rows); tiny images listed;
-//! `get_stats` breakdowns sum to the row counts. Phase 3.4c: `similar` means near-identical copies, so a
-//! same-layout pair with different OCR text is not grouped, and a resize needs stored AI evidence.
+//! `get_stats` breakdowns sum to the row counts. Phase 3.4c: `similar` means near-identical copies (a
+//! re-encode or a resize of one picture), verified on the grid thumbnails: one changed stroke or region
+//! keeps two images apart even when their OCR text and embedding are identical.
 
 mod common {
     pub mod env;
@@ -29,10 +30,9 @@ fn mix(mut x: u32) -> u32 {
     x ^ (x >> 16)
 }
 
-/// A 9x8 grid of flat cells (the dHash grid; horizontal neighbours differ by >= 40 levels, so the hash
-/// survives a resize + JPEG re-encode) under per-pixel grain (sharp: a high Laplacian variance). Distinct
-/// seeds give unrelated hashes.
-fn noise(w: u32, h: u32, seed: u32) -> RgbImage {
+/// A 9x8 grid of flat cell levels (the dHash grid; horizontal neighbours differ by >= 40 levels, so the
+/// hash survives a resize + JPEG re-encode). Distinct seeds give unrelated hashes.
+fn cells(seed: u32) -> [[i32; 9]; 8] {
     let mut cells = [[0i32; 9]; 8];
     for (r, row) in cells.iter_mut().enumerate() {
         let mut prev = -100;
@@ -48,11 +48,29 @@ fn noise(w: u32, h: u32, seed: u32) -> RgbImage {
             prev = *v;
         }
     }
+    cells
+}
+
+/// [`cells`] under per-pixel grain (sharp: a high Laplacian variance).
+fn noise(w: u32, h: u32, seed: u32) -> RgbImage {
+    let cells = cells(seed);
     RgbImage::from_fn(w, h, |x, y| {
         let cell = cells[(y * 8 / h) as usize][(x * 9 / w) as usize];
         let grain = (mix(seed.wrapping_mul(31) ^ x.wrapping_mul(7919) ^ y.wrapping_mul(104_729)) % 51) as i32 - 25;
         let v = (cell + grain).clamp(0, 255) as u8;
         Rgb([v, v, v])
+    })
+}
+
+/// A screenshot-like picture: [`cells`] with rows of dark text-like bars, all scaled to the image so a
+/// resize keeps them (sharp edges and flat areas, which a lossy thumbnail keeps; grain it does not).
+fn screen(w: u32, h: u32, seed: u32) -> RgbImage {
+    let cells = cells(seed);
+    RgbImage::from_fn(w, h, |x, y| {
+        let cell = cells[(y * 8 / h) as usize][(x * 9 / w) as usize];
+        let text = (y * 40 / h) % 4 == 1 && (x * 64 / w) % 8 < 6;
+        let v = if text { (cell - 90).max(0) } else { cell };
+        Rgb([v as u8; 3])
     })
 }
 
@@ -73,9 +91,9 @@ const B_JPG: &str = "Screenshot 2026-01-06 080000.jpg";
 /// An exact copy (newer by its name) and a re-encoded, downscaled JPEG near copy (newer, smaller).
 fn plant_duplicates(env: &Env) {
     let root = env.root_dir();
-    save(&noise(300, 200, 1), &root, A_ORIG);
+    save(&screen(300, 200, 1), &root, A_ORIG);
     std::fs::copy(root.join(A_ORIG), root.join(A_COPY)).unwrap();
-    let b = noise(300, 200, 2);
+    let b = screen(300, 200, 2);
     save(&b, &root, B_PNG);
     let small = image::imageops::resize(&b, 240, 160, image::imageops::FilterType::Triangle);
     save(&small, &root, B_JPG);
@@ -149,9 +167,8 @@ fn exact_and_reencoded_copies_are_grouped() {
     assert_eq!((g.group_id, g.best_id, g.reason), (1, a2, DuplicateReason::Newest), "same pixels: the newer copy wins");
     assert_eq!(g.image_ids, [a2, a], "best first");
 
-    // Before any AI pass only hashes can vouch: the identical pair is grouped, the downscaled JPEG is not
-    // (a resize needs OCR text or an embedding, Deferred decision #35).
-    assert_eq!(grouped(&dups(&env, DuplicateMode::Similar, None)), [id_set(&[a, a2])]);
+    // Before any AI pass the hashes and the thumbnails vouch: both pairs are grouped (Deferred decision #35).
+    assert_eq!(grouped(&dups(&env, DuplicateMode::Similar, None)), [id_set(&[a, a2]), id_set(&[b, bj])]);
     vouch_reencoded_pair(&env);
     let similar = dups(&env, DuplicateMode::Similar, None);
     let group_of = |x: i64| similar.groups.iter().find(|g| g.image_ids.contains(&x)).unwrap_or_else(|| panic!("{x} not grouped: {similar:?}"));
@@ -169,14 +186,13 @@ fn exact_and_reencoded_copies_are_grouped() {
     let scoped = env.core.find_duplicates(FindDuplicatesReq { mode: DuplicateMode::Exact, hamming: None, root_id: Some(env.root.id) }).unwrap();
     assert_eq!(scoped, exact);
     // The dupHamming setting is the default. With the evidence of both pairs agreeing (one text, one
-    // embedding) the hashes alone keep them apart at 6 bits; at 64 the first seed takes all four.
+    // embedding) and every pair of hashes in range (64 bits), the thumbnails still keep them apart.
     for x in [a, a2] {
         vouch(&env, x, REPORT, &[0.9, 0.3, 0.1]);
     }
-    assert_eq!(dups(&env, DuplicateMode::Similar, None).groups.len(), 2);
     env.core.set_setting(Caller::Ui, SetSettingReq { key: SettingKey::DupHamming, value: json!(64) }).unwrap();
-    let all_one = dups(&env, DuplicateMode::Similar, None);
-    assert_eq!(grouped(&all_one), [id_set(&[a, a2, b, bj])], "64 bits: one group of the four");
+    let two = dups(&env, DuplicateMode::Similar, None);
+    assert_eq!(grouped(&two), [id_set(&[a, a2]), id_set(&[b, bj])], "64 bits: still two pictures");
     env.core.trash_images(Caller::Ui, ImageIdsReq { image_ids: vec![a2] }).unwrap();
     assert!(dups(&env, DuplicateMode::Exact, None).groups.is_empty(), "trashed images are not proposed again");
 }
@@ -253,59 +269,88 @@ fn best_image_reasons() {
     assert_eq!(best(vec![c(4, 100, 5, Some(1.0)), c(3, 100, 5, Some(1.0))]), (3, DuplicateReason::Largest), "full tie: lowest id");
 }
 
-const LAYOUT_A: &str = "Screenshot 2026-03-01 090000.png";
-const LAYOUT_B: &str = "Screenshot 2026-03-02 090000.png";
-const SHOT: &str = "Screenshot 2026-03-03 090000.png";
-const SHOT_HALF: &str = "Screenshot 2026-03-04 090000.png";
+const SHOT: &str = "Screenshot 2026-03-01 090000.png";
+const SHOT_JPEG: &str = "Screenshot 2026-03-02 090000.jpg";
+const SHOT_HALF: &str = "Screenshot 2026-03-03 090000.png";
+const SHOT_FOOT: &str = "Screenshot 2026-03-04 090000.png";
+const SHOT_REGION: &str = "Screenshot 2026-03-05 090000.png";
 
-/// Deferred decision #35, pinned by identity in both directions on indexed images: two same-size images of
-/// one layout whose OCR text differs (an ER diagram with other entity names) are NOT copies, a 50% resize
-/// whose text OCR re-read with small errors IS. Without AI evidence the hashes decide: the same-size pair
-/// counts (hashes cannot tell it apart), the resize does not. Stats count the same groups.
-#[test]
-fn similar_means_near_identical_copies_not_the_same_layout() {
-    let env = Env::new(4);
-    let root = env.root_dir();
-    let layout = noise(600, 300, 7);
-    save(&layout, &root, LAYOUT_A);
-    let mut renamed = layout.clone();
-    for y in 140..148 {
-        for x in 300..316 {
-            renamed.put_pixel(x, y, Rgb([0, 0, 0]));
+/// `img` with three 2 px lines fanning out from one point, ~1.5% of the width long: the crow's foot that
+/// turns one ER diagram answer into another.
+fn with_crows_foot(img: &RgbImage) -> RgbImage {
+    let mut out = img.clone();
+    let len = (img.width() * 3 / 200).max(6);
+    // In the first cell, between two text rows.
+    let (x0, y0) = (img.width() / 30, img.height() * 11 / 40);
+    let ink = if img.get_pixel(x0, y0)[0] > 127 { 0 } else { 255 };
+    for slope in [-1i64, 0, 1] {
+        for t in 0..len {
+            for w in 0..2 {
+                let y = (i64::from(y0) + slope * i64::from(t) / 2 + w) as u32;
+                out.put_pixel(x0 + t, y, Rgb([ink; 3]));
+            }
         }
     }
-    save(&renamed, &root, LAYOUT_B);
-    let shot = noise(400, 250, 8);
+    out
+}
+
+/// Deferred decision #35, pinned by identity in both directions on indexed images: a re-encoded JPEG and a
+/// 50% resize of one picture are its copies; the same picture plus a crow's-foot-sized stroke, or with one
+/// changed region, is not, even when its OCR text and embedding are those of the original (only the
+/// thumbnails tell them apart). An image whose thumbnail is not usable is in no group. Stats count the
+/// same groups.
+#[test]
+fn similar_means_one_picture_re_encoded_or_resized() {
+    let env = Env::new(4);
+    let root = env.root_dir();
+    let shot = screen(640, 400, 8);
     save(&shot, &root, SHOT);
-    save(&image::imageops::resize(&shot, 200, 125, image::imageops::FilterType::Triangle), &root, SHOT_HALF);
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 80).encode_image(&shot).unwrap();
+    std::fs::write(root.join(SHOT_JPEG), jpeg).unwrap();
+    save(&image::imageops::resize(&shot, 320, 200, image::imageops::FilterType::Triangle), &root, SHOT_HALF);
+    save(&with_crows_foot(&shot), &root, SHOT_FOOT);
+    let mut region = shot.clone();
+    for (x, y, p) in region.enumerate_pixels_mut() {
+        if (448..576).contains(&x) && (300..360).contains(&y) {
+            // A notification-sized box with its own lines.
+            *p = Rgb([if (y / 6) % 2 == 0 { 40 } else { 200 }; 3]);
+        }
+    }
+    save(&region, &root, SHOT_REGION);
     env.index(true);
     let id = |n: &str| env.by_name(n).id;
-    let (la, lb, s, half) = (id(LAYOUT_A), id(LAYOUT_B), id(SHOT), id(SHOT_HALF));
+    let (s, jpg, half, foot, reg) = (id(SHOT), id(SHOT_JPEG), id(SHOT_HALF), id(SHOT_FOOT), id(SHOT_REGION));
     let bits = |col: &str, x: i64, y: i64| {
         (env.sql_i64(&format!("SELECT {col} FROM image WHERE id = {x}")) ^ env.sql_i64(&format!("SELECT {col} FROM image WHERE id = {y}"))).count_ones()
     };
     for col in ["dhash", "phash"] {
-        assert!(bits(col, la, lb) <= 2, "precondition, {col}: the layout pair is within the hash-only bound ({})", bits(col, la, lb));
+        for x in [jpg, half, foot] {
+            assert!(bits(col, s, x) <= 2, "precondition, {col} of {x}: within the hash-only bound ({})", bits(col, s, x));
+        }
     }
-    assert_ne!(env.sql_i64(&format!("SELECT content_hash = (SELECT content_hash FROM image WHERE id = {lb}) FROM image WHERE id = {la}")), 1);
+    assert!(bits("dhash", s, reg) <= 6, "precondition: the changed region is a candidate ({})", bits("dhash", s, reg));
+    let copies = [id_set(&[s, jpg, half])];
     let similar_copies = || dups(&env, DuplicateMode::Similar, None).groups.iter().map(|g| g.image_ids.len() as i64 - 1).sum::<i64>();
 
-    // AI absent: same size + close hashes is all there is to go on.
-    assert_eq!(grouped(&dups(&env, DuplicateMode::Similar, None)), [id_set(&[la, lb])], "no evidence: the resize is not proven");
-    assert_eq!(env.core.get_stats().unwrap().duplicates_similar, 1);
-
-    // AI present: one layout in the embeddings, other names in the text; the resize re-read with errors.
-    vouch(&env, la, "Student\ntakes\nCourse", &[1.0, 0.1, 0.0]);
-    vouch(&env, lb, "Author\nwrites\nBook", &[1.0, 0.11, 0.0]);
-    vouch(&env, s, REPORT, &[0.2, 1.0, 0.1]);
-    vouch(&env, half, REPORT_REREAD, &[0.21, 1.0, 0.1]);
+    // AI absent: the hashes propose, the thumbnails decide.
+    assert_eq!(grouped(&dups(&env, DuplicateMode::Similar, None)), copies, "no evidence");
+    // AI present and blind to the stroke and the region: one text and one embedding for all five.
+    for (x, text) in [(s, REPORT), (jpg, REPORT), (half, REPORT_REREAD), (foot, REPORT), (reg, REPORT)] {
+        vouch(&env, x, text, &[0.2, 1.0, 0.1]);
+    }
     for hamming in [None, Some(20), Some(duplicates::MAX_HAMMING)] {
         let r = dups(&env, DuplicateMode::Similar, hamming);
-        assert_eq!(grouped(&r), [id_set(&[s, half])], "hamming {hamming:?}: the layout pair is not a copy, the resize is");
-        assert_eq!((r.groups[0].best_id, r.groups[0].reason), (s, DuplicateReason::Largest));
+        assert_eq!(grouped(&r), copies, "hamming {hamming:?}: the stroke and the region are other pictures");
+        assert_eq!((r.groups[0].best_id, r.groups[0].reason), (jpg, DuplicateReason::Newest), "as many pixels as the PNG, newer");
     }
     assert_eq!(env.core.get_stats().unwrap().duplicates_similar, similar_copies(), "Stats read the same rule");
-    assert_eq!(similar_copies(), 1);
+    assert_eq!(similar_copies(), 2);
+
+    // A thumbnail that is not `ok` (pending regeneration, offline, error) cannot vouch for its image.
+    env.exec(&format!("UPDATE image SET thumb_state = 'pending' WHERE id = {half}"));
+    assert_eq!(grouped(&dups(&env, DuplicateMode::Similar, None)), [id_set(&[s, jpg])]);
+    assert_eq!(env.core.get_stats().unwrap().duplicates_similar, 1);
 }
 
 // ---------------------------------------------------------------------------------------------

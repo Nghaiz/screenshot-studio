@@ -1,13 +1,17 @@
 //! Duplicate groups (works without the sidecar, Deferred decision #18).
 //!
 //! - `exact`: same blake3 `content_hash`.
-//! - `similar`: near-identical copies (Deferred decision #35). Candidate stage: dHash (64-bit gradient
-//!   hash) Hamming distance <= `hamming` (the user's slider) and an aspect ratio a copy could have.
-//!   Confirm stage ([`near_copy::confirm`]): OCR text, embeddings or, without either, a stricter hash rule
-//!   must agree that the pair is a copy and not just the same layout. Groups are seeded, not chained:
-//!   images are taken in id order, and each not-yet-grouped image collects every not-yet-grouped candidate
-//!   of ITSELF that the confirm stage accepts, so a chain of small differences never merges two unrelated
-//!   screenshots. Low-information hashes ([`is_low_information`]) take no part: a near-flat image has
+//! - `similar`: near-identical copies, a re-encode or a resize of one picture (Deferred decision #35).
+//!   1. Candidate stage: dHash (64-bit gradient hash) Hamming distance <= `hamming` (the user's slider)
+//!      and an aspect ratio a copy could have. Raising the slider only widens the candidates.
+//!   2. Cheap checks ([`near_copy::plausible`]): stored OCR text and embeddings or, without either, a
+//!      stricter hash rule must not rule the pair out.
+//!   3. Pixel stage ([`pixel_check::same_picture`]), the final arbiter: the two grid thumbnails agree
+//!      block by block within re-encode and resize noise. Only the survivors of 2 are decoded.
+//!
+//!   Groups are seeded, not chained: images are taken in id order, and each not-yet-grouped image
+//!   collects every not-yet-grouped candidate of ITSELF that stages 2 and 3 accept, so a chain of small
+//!   differences never merges two unrelated screenshots. Low-information hashes ([`is_low_information`]) take no part: a near-flat image has
 //!   almost no gradient bits, so any two of them are within `hamming` however different they are
 //!   (Deferred decision #33). They stay eligible for `exact`.
 //!
@@ -20,11 +24,15 @@
 //! cleanup wizard's similar step) and `get_stats` (`duplicatesSimilar`) all read it.
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::sync::Arc;
 
+use rayon::prelude::*;
 use rusqlite::{Connection, params};
 
 use super::near_copy::{self, Evidence};
+use super::pixel_check::{self, Picture};
 use crate::contract::AppError;
 use crate::contract::ipc::{DuplicateGroup, DuplicateMode, DuplicateReason, DuplicateResult};
 
@@ -88,11 +96,11 @@ pub fn load(conn: &Connection, root_id: Option<i64>) -> Result<Vec<Candidate>, A
 }
 
 /// Index lists (into `c`) of the groups of `mode`, each with at least two members. `similar` reads the
-/// confirm stage's evidence of its candidate pairs from `conn`.
-pub fn groups(conn: &Connection, c: &[Candidate], mode: DuplicateMode, hamming: u32) -> Result<Vec<Vec<usize>>, AppError> {
+/// evidence of its candidate pairs from `conn` and their grid thumbnails from `data_dir`.
+pub fn groups(conn: &Connection, data_dir: &Path, c: &[Candidate], mode: DuplicateMode, hamming: u32) -> Result<Vec<Vec<usize>>, AppError> {
     match mode {
         DuplicateMode::Exact => Ok(exact_groups(c)),
-        DuplicateMode::Similar => similar_groups(c, hamming, |ids| near_copy::load(conn, ids)),
+        DuplicateMode::Similar => similar_groups(c, hamming, |ids| near_copy::load(conn, ids), |ids| pixel_check::load(conn, data_dir, ids)),
     }
 }
 
@@ -138,26 +146,45 @@ fn candidates(c: &[Candidate], hamming: u32) -> Vec<Vec<usize>> {
     near
 }
 
-/// Seeded groups over the candidate pairs that the confirm stage accepts. `evidence` is asked once, for
-/// the ids of every image in a candidate pair.
+/// Seeded groups over the candidate pairs that the cheap checks and the pixel stage accept. `evidence`
+/// is asked once, for the ids of every image in a candidate pair; `pictures` once, for the ids of every
+/// image in a pair that passed the cheap checks (an id it leaves out has no usable thumbnail).
 fn similar_groups(
     c: &[Candidate],
     hamming: u32,
     evidence: impl FnOnce(&[i64]) -> Result<HashMap<i64, Evidence>, AppError>,
+    pictures: impl FnOnce(&[i64]) -> Result<HashMap<i64, Arc<Picture>>, AppError>,
 ) -> Result<Vec<Vec<usize>>, AppError> {
     let near = candidates(c, hamming);
     let ids: Vec<i64> = near.iter().zip(c).filter(|(n, _)| !n.is_empty()).map(|(_, cand)| cand.id).collect();
     let ev = evidence(&ids)?;
     let none = Evidence::default();
     let ev_of = |i: usize| ev.get(&c[i].id).unwrap_or(&none);
+    let plausible: Vec<(usize, usize)> = near
+        .iter()
+        .enumerate()
+        .flat_map(|(i, n)| n.iter().filter(move |&&j| j > i).map(move |&j| (i, j)))
+        .filter(|&(i, j)| near_copy::plausible(&c[i], ev_of(i), &c[j], ev_of(j)))
+        .collect();
+    let mut pic_ids: Vec<i64> = plausible.iter().flat_map(|&(i, j)| [c[i].id, c[j].id]).collect();
+    pic_ids.sort_unstable();
+    pic_ids.dedup();
+    let pics = pictures(&pic_ids)?;
+    let copies: HashSet<(usize, usize)> = plausible
+        .into_par_iter()
+        .filter(|&(i, j)| match (pics.get(&c[i].id), pics.get(&c[j].id)) {
+            (Some(a), Some(b)) => pixel_check::same_picture(a, b),
+            _ => false, // no thumbnail: the pair cannot be verified
+        })
+        .collect();
+    let is_copy = |i: usize, j: usize| copies.contains(&(i.min(j), i.max(j)));
     let mut taken = vec![false; c.len()];
     let mut out = Vec::new();
     for i in 0..c.len() {
         if taken[i] || near[i].is_empty() {
             continue;
         }
-        let mut group: Vec<usize> =
-            near[i].iter().copied().filter(|&j| !taken[j] && near_copy::confirm(&c[i], ev_of(i), &c[j], ev_of(j))).collect();
+        let mut group: Vec<usize> = near[i].iter().copied().filter(|&j| !taken[j] && is_copy(i, j)).collect();
         if group.is_empty() {
             continue;
         }
@@ -199,8 +226,8 @@ pub fn best_of(c: &[Candidate], group: &[usize]) -> (usize, DuplicateReason) {
 
 /// `find_duplicates`: groups with the best image first, then the others by id; groups ordered by
 /// size (largest first), then by their best id. `groupId` is 1-based in that order.
-pub fn find(conn: &Connection, c: &[Candidate], mode: DuplicateMode, hamming: u32) -> Result<DuplicateResult, AppError> {
-    let mut groups: Vec<(usize, DuplicateReason, Vec<usize>)> = groups(conn, c, mode, hamming)?
+pub fn find(conn: &Connection, data_dir: &Path, c: &[Candidate], mode: DuplicateMode, hamming: u32) -> Result<DuplicateResult, AppError> {
+    let mut groups: Vec<(usize, DuplicateReason, Vec<usize>)> = groups(conn, data_dir, c, mode, hamming)?
         .into_iter()
         .map(|g| {
             let (best, reason) = best_of(c, &g);
@@ -244,14 +271,24 @@ mod tests {
         }
     }
 
-    /// Evidence that agrees for every image (one embedding for all, no OCR): only the candidate stage
-    /// decides.
+    /// Evidence that agrees for every image (one embedding for all, no OCR).
     fn agreeing(ids: &[i64]) -> Result<HashMap<i64, Evidence>, AppError> {
         Ok(ids.iter().map(|&id| (id, Evidence { text: None, embedding: Some(Embedding::new("m", vec![1.0, 0.0])) })).collect())
     }
 
+    /// An 8x8 picture whose pixels follow `seed`.
+    fn picture(seed: u8) -> Arc<Picture> {
+        Arc::new(Picture::from_luma(8, 8, (0..64u8).map(|v| v.wrapping_mul(seed).wrapping_add(seed)).collect()).unwrap())
+    }
+
+    /// One picture for every image.
+    fn alike(ids: &[i64]) -> Result<HashMap<i64, Arc<Picture>>, AppError> {
+        Ok(ids.iter().map(|&id| (id, picture(3))).collect())
+    }
+
+    /// Agreeing evidence and pictures: only the candidate stage decides.
     fn similar(c: &[Candidate], hamming: u32) -> Vec<Vec<i64>> {
-        ids(c, &similar_groups(c, hamming, agreeing).unwrap())
+        ids(c, &similar_groups(c, hamming, agreeing, alike).unwrap())
     }
 
     /// 32 set bits, 32 clear: an ordinary screenshot's hash.
@@ -296,17 +333,46 @@ mod tests {
     #[test]
     fn evidence_is_asked_once_for_the_candidate_images_only() {
         let c = vec![cand(1, BALANCED), cand(2, !BALANCED), cand(3, BALANCED ^ 1), cand(4, 0)];
-        let mut asked = Vec::new();
-        let got = similar_groups(&c, 6, |ids| {
-            asked.push(ids.to_vec());
-            agreeing(ids)
-        })
+        let (mut asked, mut decoded) = (Vec::new(), Vec::new());
+        let got = similar_groups(
+            &c,
+            6,
+            |ids| {
+                asked.push(ids.to_vec());
+                agreeing(ids)
+            },
+            |ids| {
+                decoded.push(ids.to_vec());
+                alike(ids)
+            },
+        )
         .unwrap();
         assert_eq!(asked, vec![vec![1, 3]], "only the pair within range; the far and the flat image are not read");
+        assert_eq!(decoded, vec![vec![1, 3]]);
         assert_eq!(ids(&c, &got), vec![vec![1, 3]]);
-        // The confirm stage can refuse every candidate: no evidence + hashes 1 bit apart but pHash far apart.
+        // The cheap checks can refuse every candidate (no evidence + hashes 1 bit apart but pHash far apart):
+        // then no thumbnail is decoded at all.
         let far = vec![cand(1, BALANCED), Candidate { phash: Some(0xFF), ..cand(2, BALANCED ^ 1) }];
-        assert!(similar_groups(&far, 6, |_| Ok(HashMap::new())).unwrap().is_empty());
+        let mut decoded = Vec::new();
+        let got = similar_groups(&far, 6, |_| Ok(HashMap::new()), |ids| {
+            decoded.extend_from_slice(ids);
+            alike(ids)
+        });
+        assert!(got.unwrap().is_empty() && decoded.is_empty());
+    }
+
+    #[test]
+    fn the_pixel_stage_has_the_last_word() {
+        // Five images whose hashes and evidence all agree. 1, 2 and 4 show one picture, 3 another, 5 has no
+        // usable thumbnail.
+        let c: Vec<Candidate> = (1..=5).map(|id| cand(id, BALANCED ^ id)).collect();
+        let pics = |ids: &[i64]| -> Result<HashMap<i64, Arc<Picture>>, AppError> {
+            Ok(ids.iter().filter(|&&id| id != 5).map(|&id| (id, picture(if id == 3 { 9 } else { 3 }))).collect())
+        };
+        assert_eq!(ids(&c, &similar_groups(&c, 6, agreeing, pics).unwrap()), vec![vec![1, 2, 4]]);
+        // Seeded on the pixels too: 3 is the seed of nothing, 5 is in no group even alone with a twin.
+        let pair = vec![cand(3, BALANCED), cand(5, BALANCED)];
+        assert!(similar_groups(&pair, 6, agreeing, pics).unwrap().is_empty());
     }
 
     #[test]
@@ -351,7 +417,7 @@ mod tests {
         let flat = |id: i64, hash: &str| Candidate { content_hash: Some(hash.into()), ..cand(id, 0) };
         let c = vec![flat(1, "a"), flat(2, "a"), flat(3, "b")];
         assert_eq!(ids(&c, &exact_groups(&c)), vec![vec![1, 2]]);
-        assert!(similar_groups(&c, MAX_HAMMING as u32, agreeing).unwrap().is_empty());
+        assert!(similar_groups(&c, MAX_HAMMING as u32, agreeing, alike).unwrap().is_empty());
         assert_eq!(redundant(&exact_groups(&c)), 1);
     }
 }

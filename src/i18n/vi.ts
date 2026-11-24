@@ -451,7 +451,7 @@ export const vi = {
   "dup.exact": "Giống hệt",
   "dup.similar": "Gần giống",
   "dup.hamming": "Độ lệch cho phép: {n}",
-  "dup.hammingHelp": "Thấp: chỉ ảnh gần như y hệt. Cao: gom cả ảnh hơi khác nhau. Ảnh gần như trơn (một màu) chỉ được ghép khi giống hệt.",
+  "dup.hammingHelp": "Cao hơn: xét thêm nhiều cặp ảnh, nhưng chỉ gom những bản gần như y hệt (cùng một ảnh được lưu lại hoặc đổi kích thước). Ảnh gần như trơn (một màu) chỉ được ghép khi giống hệt.",
   "dup.summary": "{groups} nhóm · {extra} bản thừa",
   "dup.none": "Không tìm thấy ảnh trùng lặp.",
   "dup.loading": "Đang tìm ảnh trùng lặp…",

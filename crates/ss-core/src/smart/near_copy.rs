@@ -1,18 +1,17 @@
-//! The confirm stage of `similar` duplicates (README Deferred decision #35). `similar` means
-//! near-identical copies: a re-encode, a resize, or a small change such as a cursor, a notification or a
-//! few pixels of scroll. It does not mean "same layout": a 64-bit dHash of a mostly white screenshot cannot
-//! tell apart two images that share one (one diagram layout with other labels, one app's different
-//! dialogs), so the dHash only proposes candidate pairs and this module decides, from evidence
-//! the catalog already holds. Thresholds: README Re-score phase 3.4c (real library and synthetic copies
-//! of 20 local screenshots, counts only).
+//! The cheap checks of `similar` duplicates (README Deferred decision #35). `similar` means near-identical
+//! copies: a re-encode or a resize of one picture. It does not mean "same layout": a 64-bit dHash of a
+//! mostly white screenshot cannot tell apart two images that share one (one diagram layout with other
+//! labels, one app's different dialogs), so the dHash only proposes candidate pairs. This module drops the
+//! candidates that the evidence the catalog already holds rules out, so that only the survivors have their
+//! thumbnails decoded by the final arbiter, [`super::pixel_check`]. Thresholds: README Re-score phase 3.4c
+//! (real library and synthetic copies of 20 local screenshots, counts only).
 //!
-//! A candidate pair is a copy when every check that applies passes:
+//! A candidate pair is [`plausible`] when every check that applies passes:
 //! 1. Shape, always ([`shape_fits`]): the aspect ratios agree within the rounding of a resize.
 //! 2. Text, when both images have an OCR result and either has text: [`text_similarity`] >= [`TEXT_MIN`].
 //! 3. Image features, when both have an embedding of the same model and size: cosine >= [`COSINE_MIN`].
-//! 4. Neither 2 nor 3 applied (AI absent, or no text and no embedding): [`hash_only_fits`], the same
-//!    pixel size and both dHash and pHash within [`HASH_ONLY_MAX`] bits. Hashes alone cannot vouch for
-//!    a resize: re-captures of one layout a few pixels apart collide at every hash distance.
+//! 4. Neither 2 nor 3 applied (AI absent, or no text and no embedding): [`hash_only_fits`], both dHash and
+//!    pHash within [`HASH_ONLY_MAX`] bits.
 
 use std::cell::OnceCell;
 use std::collections::HashMap;
@@ -37,12 +36,12 @@ pub const TEXT_MIN: f64 = 0.90;
 /// one template with different content (two exercises' statements, one dialog for two logins) passed the
 /// text check at 0.923 and 0.966; their cosines were 0.955 and 0.908.
 pub const COSINE_MIN: f32 = 0.96;
-/// Most dHash and most pHash bits a copy may differ by when no OCR text or embedding can vouch for it.
-/// Real library with the AI evidence ignored: same-size pairs within it are the 9 exact copies and 1 near
-/// copy; at 3 bits, 3 pairs whose content changed would join.
+/// Most dHash and most pHash bits a copy may differ by when no OCR text or embedding can rule it out. It
+/// bounds how many thumbnails the pixel stage decodes without AI evidence, whatever the slider says.
+/// Synthetic re-encodes and resizes within it: JPEG q85 17/20, q70 14/20, 75% 17/20, 50% 17/20, 33% 14/20.
 pub const HASH_ONLY_MAX: u32 = 2;
 
-/// What the catalog knows about one image besides its row: the confirm stage's evidence.
+/// What the catalog knows about one image besides its row: the evidence of the cheap checks.
 #[derive(Debug, Clone, Default)]
 pub struct Evidence {
     /// None without an `ocr_result` row.
@@ -179,15 +178,15 @@ pub fn shape_fits(a: &Candidate, b: &Candidate) -> bool {
     (rs - rl).abs() / rs.max(rl) <= SHAPE_SLACK_PX * (1.0 / small.width as f64 + 1.0 / small.height as f64)
 }
 
-/// The rule when neither text nor embeddings apply: the same pixel size and both hashes within
-/// [`HASH_ONLY_MAX`] bits.
+/// The rule when neither text nor embeddings apply: both hashes within [`HASH_ONLY_MAX`] bits.
 pub fn hash_only_fits(a: &Candidate, b: &Candidate) -> bool {
     let close = |x: Option<i64>, y: Option<i64>| matches!((x, y), (Some(x), Some(y)) if (x ^ y).count_ones() <= HASH_ONLY_MAX);
-    a.width > 0 && a.height > 0 && (a.width, a.height) == (b.width, b.height) && close(a.dhash, b.dhash) && close(a.phash, b.phash)
+    close(a.dhash, b.dhash) && close(a.phash, b.phash)
 }
 
-/// True when `a` and `b` (a dHash candidate pair) are near-identical copies (the module doc's rule).
-pub fn confirm(a: &Candidate, ea: &Evidence, b: &Candidate, eb: &Evidence) -> bool {
+/// True when the evidence of `a` and `b` (a dHash candidate pair) does not rule out a copy (the module
+/// doc's checks). Only the pixel stage can confirm one.
+pub fn plausible(a: &Candidate, ea: &Evidence, b: &Candidate, eb: &Evidence) -> bool {
     if !shape_fits(a, b) {
         return false;
     }
@@ -213,13 +212,18 @@ pub fn confirm(a: &Candidate, ea: &Evidence, b: &Candidate, eb: &Evidence) -> bo
     checked || hash_only_fits(a, b)
 }
 
+/// `ids` as a JSON array, for `json_each`.
+pub(super) fn id_list(ids: &[i64]) -> String {
+    format!("[{}]", ids.iter().map(i64::to_string).collect::<Vec<_>>().join(","))
+}
+
 /// Evidence of `ids` (images without OCR or embedding rows are absent from the map).
 pub fn load(conn: &Connection, ids: &[i64]) -> Result<HashMap<i64, Evidence>, AppError> {
     let mut out: HashMap<i64, Evidence> = HashMap::with_capacity(ids.len());
     if ids.is_empty() {
         return Ok(out);
     }
-    let list = format!("[{}]", ids.iter().map(i64::to_string).collect::<Vec<_>>().join(","));
+    let list = id_list(ids);
     let mut st = conn.prepare_cached("SELECT image_id, text FROM ocr_result WHERE image_id IN (SELECT value FROM json_each(?1))")?;
     for row in st.query_map([&list], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
         let (id, text) = row?;
@@ -272,11 +276,11 @@ mod tests {
         // Same size, same hashes, embeddings that see one layout: only the text tells them apart.
         let (a, b) = (img(1, 1830, 280), img(2, 1830, 280));
         assert!(sim(ER_A, ER_B) < 0.1, "{}", sim(ER_A, ER_B));
-        assert!(!confirm(&a, &ev(Some(ER_A), Some(&V1)), &b, &ev(Some(ER_B), Some(&V1_NEAR))));
-        assert!(!confirm(&a, &ev(Some(ER_A), None), &b, &ev(Some(ER_B), None)), "text alone refuses it too");
+        assert!(!plausible(&a, &ev(Some(ER_A), Some(&V1)), &b, &ev(Some(ER_B), Some(&V1_NEAR))));
+        assert!(!plausible(&a, &ev(Some(ER_A), None), &b, &ev(Some(ER_B), None)), "text alone refuses it too");
         // One window whose content changed is not a copy either, however close its embedding.
         assert!(sim(TERM_A, TERM_B) < TEXT_MIN, "{}", sim(TERM_A, TERM_B));
-        assert!(!confirm(&img(3, 2560, 1600), &ev(Some(TERM_A), Some(&V1)), &img(4, 2560, 1600), &ev(Some(TERM_B), Some(&V1))));
+        assert!(!plausible(&img(3, 2560, 1600), &ev(Some(TERM_A), Some(&V1)), &img(4, 2560, 1600), &ev(Some(TERM_B), Some(&V1))));
     }
 
     #[test]
@@ -284,46 +288,46 @@ mod tests {
         assert!(sim(INVOICE, INVOICE_REREAD) >= TEXT_MIN, "{}", sim(INVOICE, INVOICE_REREAD));
         let (orig, e1) = (img(1, 1830, 280), ev(Some(INVOICE), Some(&V1)));
         let e2 = ev(Some(INVOICE_REREAD), Some(&V1_NEAR));
-        assert!(confirm(&orig, &e1, &img(2, 1830, 280), &e2), "re-encode: same size");
-        assert!(confirm(&orig, &e1, &img(3, 915, 140), &e2), "50% resize");
-        assert!(confirm(&img(3, 915, 140), &e2, &orig, &e1), "symmetric");
-        // The same ER drawing captured twice (1 px apart) with the same names is a copy as far as evidence goes.
-        assert!(confirm(&img(4, 1833, 287), &ev(Some(ER_A), Some(&V1)), &img(5, 1834, 287), &ev(Some(ER_A), Some(&V1_NEAR))));
+        assert!(plausible(&orig, &e1, &img(2, 1830, 280), &e2), "re-encode: same size");
+        assert!(plausible(&orig, &e1, &img(3, 915, 140), &e2), "50% resize");
+        assert!(plausible(&img(3, 915, 140), &e2, &orig, &e1), "symmetric");
+        // The same ER drawing captured twice (1 px apart) with the same names passes: only pixels can tell.
+        assert!(plausible(&img(4, 1833, 287), &ev(Some(ER_A), Some(&V1)), &img(5, 1834, 287), &ev(Some(ER_A), Some(&V1_NEAR))));
     }
 
     #[test]
     fn every_applicable_check_must_agree() {
         let (a, b) = (img(1, 800, 600), img(2, 800, 600));
         let text = |t: &str, v: &[f32]| ev(Some(t), Some(v));
-        assert!(!confirm(&a, &text(INVOICE, &V1), &b, &text(INVOICE, &V1_FAR)), "same text, the embedding disagrees");
-        assert!(!confirm(&a, &ev(Some(INVOICE), Some(&V1)), &b, &ev(Some(""), Some(&V1))), "text on one side only");
-        assert!(!confirm(&a, &ev(Some(INVOICE), Some(&V1)), &b, &ev(Some(INVOICE), Some(&[0.0, 0.0, 0.0]))), "a zero vector matches nothing");
+        assert!(!plausible(&a, &text(INVOICE, &V1), &b, &text(INVOICE, &V1_FAR)), "same text, the embedding disagrees");
+        assert!(!plausible(&a, &ev(Some(INVOICE), Some(&V1)), &b, &ev(Some(""), Some(&V1))), "text on one side only");
+        assert!(!plausible(&a, &ev(Some(INVOICE), Some(&V1)), &b, &ev(Some(INVOICE), Some(&[0.0, 0.0, 0.0]))), "a zero vector matches nothing");
         // No text on either side (OCR found none): the embedding decides.
-        assert!(confirm(&a, &ev(Some(""), Some(&V1)), &b, &ev(Some(" · "), Some(&V1_NEAR))));
-        assert!(!confirm(&a, &ev(Some(""), Some(&V1)), &b, &ev(Some(""), Some(&V1_FAR))));
+        assert!(plausible(&a, &ev(Some(""), Some(&V1)), &b, &ev(Some(" · "), Some(&V1_NEAR))));
+        assert!(!plausible(&a, &ev(Some(""), Some(&V1)), &b, &ev(Some(""), Some(&V1_FAR))));
         // Embeddings of different models (or sizes) are not compared; the text still is.
         let other = Evidence { text: Some(OcrText::new(INVOICE)), embedding: Some(Embedding::new("clip", V1_FAR.to_vec())) };
-        assert!(confirm(&a, &text(INVOICE, &V1), &b, &other));
+        assert!(plausible(&a, &text(INVOICE, &V1), &b, &other));
         let short = Evidence { text: Some(OcrText::new(INVOICE)), embedding: Some(Embedding::new("siglip", vec![1.0])) };
-        assert!(confirm(&a, &text(INVOICE, &V1), &b, &short));
+        assert!(plausible(&a, &text(INVOICE, &V1), &b, &short));
         // The shape check always applies.
-        assert!(!confirm(&a, &text(INVOICE, &V1), &img(2, 800, 500), &text(INVOICE, &V1)));
+        assert!(!plausible(&a, &text(INVOICE, &V1), &img(2, 800, 500), &text(INVOICE, &V1)));
     }
 
     #[test]
-    fn without_text_or_embeddings_only_same_size_copies_with_close_hashes_count() {
+    fn without_text_or_embeddings_both_hashes_must_be_close() {
         let none = Evidence::default();
         let with = |id, w, h, d: i64, p: i64| Candidate { dhash: Some(HASH ^ d), phash: Some(HASH ^ p), ..img(id, w, h) };
         let a = img(1, 800, 600);
-        assert!(confirm(&a, &none, &with(2, 800, 600, 0b11, 0b11), &none), "2 + 2 bits, same size");
-        assert!(!confirm(&a, &none, &with(2, 800, 600, 0b111, 0), &none), "3 dHash bits");
-        assert!(!confirm(&a, &none, &with(2, 800, 600, 0, 0b111), &none), "3 pHash bits");
-        assert!(!confirm(&a, &none, &with(2, 400, 300, 0, 0), &none), "a resize needs text or an embedding to vouch for it");
-        assert!(!confirm(&a, &none, &Candidate { phash: None, ..img(2, 800, 600) }, &none), "no pHash, no proof");
+        assert!(plausible(&a, &none, &with(2, 800, 600, 0b11, 0b11), &none), "2 + 2 bits, same size");
+        assert!(plausible(&a, &none, &with(2, 400, 300, 0b1, 0b1), &none), "a resize: the pixel stage decides");
+        assert!(!plausible(&a, &none, &with(2, 800, 600, 0b111, 0), &none), "3 dHash bits");
+        assert!(!plausible(&a, &none, &with(2, 800, 600, 0, 0b111), &none), "3 pHash bits");
+        assert!(!plausible(&a, &none, &Candidate { phash: None, ..img(2, 800, 600) }, &none), "no pHash, no proof");
         // Evidence on one side only is no evidence: the hash rule decides.
         let one = ev(Some(INVOICE), Some(&V1));
-        assert!(confirm(&a, &one, &with(2, 800, 600, 1, 1), &none));
-        assert!(!confirm(&a, &one, &with(2, 400, 300, 0, 0), &none));
+        assert!(plausible(&a, &one, &with(2, 800, 600, 1, 1), &none));
+        assert!(!plausible(&a, &one, &with(2, 400, 300, 0b111, 0), &none));
     }
 
     #[test]

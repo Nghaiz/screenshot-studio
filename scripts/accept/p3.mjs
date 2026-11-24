@@ -19,15 +19,14 @@
 //                     INVOICE-7731`, planted-exact.png = the bytes of #7, planted-similar.jpg = #9 re-encoded JPEG
 //   index             `ssctl add-root` + `ssctl index`: total == thumbOk == 52
 //   dupes-similar-no-ai  (3.4c) `ssctl dupes --mode similar --json` before the AI pass (no OCR text, no
-//                     embedding: the hash-only rule of README Deferred decision #35): a group {#9,
-//                     planted-similar.jpg} (same size, so hashes may vouch for it); any other group is the
-//                     exact pair
+//                     embedding: the hashes and the thumbnails' pixels decide, README Deferred decision #35): a
+//                     group {#9, planted-similar.jpg}; any other group is the exact pair
 //   ai                `ssctl ai --tasks ocr,embed --json`: per task done == candidates == 52, failed == skippedCloud == 0
 //   search-ocr        `ssctl search "INVOICE-7731" --json` returns the invoice (no file name carries the text)
 //   search-unaccented `ssctl search "hoa don" --json` returns it too (no diacritics, `đ` typed as `d`)
 //   dupes-exact       `ssctl dupes --mode exact --json`: exactly one group, {#7, planted-exact.png}
 //   dupes-similar     `ssctl dupes --mode similar --json` after the AI pass (OCR text and embeddings stored, so
-//                     they decide): a group {#9, planted-similar.jpg}; any other group is the exact pair
+//                     they prune too): a group {#9, planted-similar.jpg}; any other group is the exact pair
 //   sidecar-absent    `ssctl set sidecarVenv "\"<temp>/no-venv\""`, then `ssctl status --json` reports `absent`
 //   search-absent     ... and `ssctl search "INVOICE" --json` exits 0 with the invoice (FTS over stored OCR text)
 // group app (the INSTALLED app, NSIS bundle of phase 2.3 + the sidecar resources of this phase):

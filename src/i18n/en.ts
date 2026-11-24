@@ -453,7 +453,7 @@ export const en: { [K in MessageKey]: string } = {
   "dup.exact": "Exact copies",
   "dup.similar": "Similar",
   "dup.hamming": "Allowed difference: {n}",
-  "dup.hammingHelp": "Low: only near-identical images. High: also groups images that differ a little. Near-blank (flat) images are only matched as exact copies.",
+  "dup.hammingHelp": "Higher: checks more candidate pairs, but only near-identical copies (the same picture saved again or resized) are grouped. Near-blank (flat) images are only matched as exact copies.",
   "dup.summary": "{groups} groups · {extra} extra copies",
   "dup.none": "No duplicates found.",
   "dup.loading": "Looking for duplicates…",

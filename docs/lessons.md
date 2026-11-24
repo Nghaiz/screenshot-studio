@@ -5,13 +5,39 @@ to a kit. Newest first. One entry: what happened, why, what to do.
 
 ## 2026-11-24 — phase 3.4c
 
+### OCR text and embeddings cannot tell one answer choice from another: compare the pixels
+- **Seen (orchestrator's cua-driver check of the first 3.4c rule, counts only):** of the 16 real `similar` pairs left
+  after the text and embedding checks, 5 were different pictures: two answer choices of one diagram question (one
+  crow's foot on one side or on both) had identical OCR text and an identical embedding, and two captures of one
+  screen a minute apart passed too. "Keep the best" would have trashed a different answer.
+- **Do:** make a pixel comparison of the stored grid thumbnails the final arbiter (`smart::pixel_check`) and let
+  hashes, OCR text and embeddings only prune what reaches it. A crow's foot is 3-5 px at the 320 px thumbnail
+  scale of a wide diagram, so score the worst small block, not the image mean.
+
+### Smooth two thumbnails before diffing them; do not forgive shifts
+- **Seen (120 synthetic re-encodes/resizes of 20 local screenshots, 9 + 5 labelled real pairs):** a raw 4 px block
+  diff of two thumbnails of ONE picture reached 28.8 when the resized copy's thumbnail came out 1 px shorter
+  (rounding), three times the worst same-size re-encode. Resizing to the common size with Lanczos3, a [1, 2, 1] blur both
+  ways and evenly spaced blocks brought every copy to <= 9.8 and the different real pairs to >= 47.6. A +-1 px
+  shift tolerance on top lowered the copies no further but let the different pairs fall to 20.2.
+- **Do:** absorb resize offsets by smoothing, not by searching a neighbourhood: a tolerance window also forgives
+  the new stroke you are trying to see.
+
+### cua-driver: `bring_to_front` before any screenshot or timing check of a WebView2 window
+- **Seen (the 3.4b open item, explained):** WebView2 stops painting a window that is fully covered. cua-driver
+  hands the foreground back after a foreground action, so a capture of the covered window comes back blank, which
+  read as smart views blank for 2-5 s and once the whole window blank. After `bring_to_front` it renders at once;
+  the app was fine (CDP saw the content at ~0.3 s, phase 3.4b).
+- **Do:** call `bring_to_front` before every screenshot or timing measurement taken with cua-driver, and never
+  report a blank from a covered window as an app defect.
+
 ### A 64-bit dHash (and pHash) matches a layout, not an image
 - **Seen (real library, counts only):** `similar` put 27 screenshots of one diagram layout in one group (~1830x280
   each, other labels) and 9 unrelated screenshots in another. Of the 875 pairs within
   Hamming 6, 461 also had pHash distance 0: the DCT mean hash of an 8x8 grid is just as blind to a mostly white
   screenshot's text. Only 59 of the 875 even had aspect ratios a resize could explain.
-- **Do:** let hashes propose and other evidence decide (`smart::near_copy`, Deferred decision #35): the aspect ratio,
-  then the stored OCR text and embeddings. Without AI rows only same-size pairs with close hashes count, because
+- **Do:** let hashes propose and other evidence decide (Deferred decision #35): the aspect ratio, the stored OCR text
+  and embeddings (`smart::near_copy`), then the thumbnails' pixels (`smart::pixel_check`, entry above), because
   re-captures of one layout a few pixels apart collide at every hash distance.
 
 ### OCR text of a copy is not stable, and SigLIP sees layout more than content
@@ -33,6 +59,15 @@ to a kit. Newest first. One entry: what happened, why, what to do.
   per OCR text up front; sorted `Vec<u64>` trigrams built only when a pair reaches the text check: ~50 ms.
 - **Do:** time a changed path at the slider's extremes, not only at the default; order a rule's checks cheapest
   first (embedding dot product before text) and build expensive per-image data lazily (`OnceCell`).
+
+### Restoring a mutated file by renaming its backup leaves cargo on the mutated build
+- **Seen:** a mutation check backed each file up with `shutil.copyfile`, mutated it, ran `cargo test`, then
+  restored it with `shutil.move(backup, file)`. The restored file kept the backup's mtime, older than the last
+  (mutated) build, so cargo called the debug build fresh: the next `cargo test` and p3's lane tests ran the last
+  mutant (image mean instead of the worst block) and failed on correct source. Release builds, compiled later,
+  were fine.
+- **Do:** restore by writing the original bytes back (a new mtime), or `touch` the restored files; when a test fails
+  right after a mutation check, rebuild from a touched source before debugging the code.
 
 ### Python string literals inside a Git Bash heredoc still process escapes
 - **Seen:** a `python - <<'EOF'` patch script whose replacement text held `'\\''` and `"...\\n..."` wrote `'''` and real
@@ -62,6 +97,7 @@ to a kit. Newest first. One entry: what happened, why, what to do.
   none of 993 screencast frames around 4 view switches lost the sidebar.
 - **Do:** treat a blank seen only from outside (occluded or background window, WebView2's LOW memory target from
   3.4) as unexplained until it is reproduced with a screen-level tool; CDP screencast frames are compositor output.
+  Explained in phase 3.4c: a fully covered WebView2 window stops painting (`bring_to_front` first, entry above).
 
 ### `PYTHONPYCACHEPREFIX` ignores every existing `__pycache__`
 - **Seen:** `python -m ss_sidecar --selftest` (CUDA) 13.2 s with the venv's own caches; 40.1 s on the first start

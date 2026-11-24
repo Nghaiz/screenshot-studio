@@ -10,6 +10,8 @@
 //! [`TOP_TAGS`] most used tags (present images). `duplicatesExact` / `duplicatesSimilar`: redundant
 //! copies (sum over groups of size - 1) of `find_duplicates` over the whole library.
 
+use std::path::Path;
+
 use rusqlite::Connection;
 
 use super::duplicates::{self, Candidate};
@@ -22,7 +24,8 @@ pub const TOP_TAGS: i64 = 10;
 /// `byAspect` key of rows without dimensions.
 pub const ASPECT_UNKNOWN: &str = "unknown";
 
-pub fn get_stats(conn: &Connection, hamming: u32) -> Result<Stats, AppError> {
+/// `data_dir` holds the grid thumbnails the `similar` count compares (the same rule as `find_duplicates`).
+pub fn get_stats(conn: &Connection, data_dir: &Path, hamming: u32) -> Result<Stats, AppError> {
     let counts = query::get_counts(conn)?;
     let by_month = count_by(
         conn,
@@ -50,8 +53,8 @@ pub fn get_stats(conn: &Connection, hamming: u32) -> Result<Stats, AppError> {
         [TOP_TAGS],
     )?;
     let cands: Vec<Candidate> = duplicates::load(conn, None)?;
-    let duplicates_exact = duplicates::redundant(&duplicates::groups(conn, &cands, DuplicateMode::Exact, 0)?);
-    let duplicates_similar = duplicates::redundant(&duplicates::groups(conn, &cands, DuplicateMode::Similar, hamming)?);
+    let duplicates_exact = duplicates::redundant(&duplicates::groups(conn, data_dir, &cands, DuplicateMode::Exact, 0)?);
+    let duplicates_similar = duplicates::redundant(&duplicates::groups(conn, data_dir, &cands, DuplicateMode::Similar, hamming)?);
     Ok(Stats { counts, by_month, by_aspect, by_folder, by_category, top_tags, duplicates_exact, duplicates_similar })
 }
 

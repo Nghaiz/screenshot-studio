@@ -181,7 +181,7 @@ impl AppCore {
         }
         self.catalog.read(|conn| {
             let cands = duplicates::load(conn, req.root_id)?;
-            duplicates::find(conn, &cands, req.mode, hamming as u32)
+            duplicates::find(conn, self.catalog.data_dir(), &cands, req.mode, hamming as u32)
         })
     }
 
@@ -214,7 +214,7 @@ impl AppCore {
 
     pub fn get_stats(&self) -> Result<Stats, AppError> {
         let hamming = self.setting_i64(SettingKey::DupHamming)?.clamp(0, duplicates::MAX_HAMMING) as u32;
-        self.catalog.read(|conn| stats::get_stats(conn, hamming))
+        self.catalog.read(|conn| stats::get_stats(conn, self.catalog.data_dir(), hamming))
     }
 
     /// `detect_pii`: the image's OCR lines (when an `ocr_result` row exists, else `null` = the sidecar
