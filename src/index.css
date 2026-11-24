@@ -180,9 +180,44 @@ button.ss-chip:hover { border-color: var(--ss-accent); }
 .ss-chart:hover .ss-bar path, .ss-chart:hover .ss-bar rect[rx] { opacity: 0.55; }
 .ss-chart .ss-bar:hover path, .ss-chart .ss-bar:hover rect[rx] { opacity: 1; }
 
+/* ---- phase 4.2: "new" badge, theme gallery, empty states, tray popup ---- */
+.ss-new-badge {
+  position: absolute; top: 6px; left: 6px; pointer-events: none;
+  padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+  background: var(--ss-accent); color: var(--ss-accent-contrast); box-shadow: 0 0 0 0 var(--ss-accent);
+  animation: ss-new-glow calc(1.8s / max(var(--ss-motion), 0.001)) ease-out 3;
+}
+@keyframes ss-new-glow { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ss-accent) 70%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }
+[data-motion="off"] .ss-new-badge { animation: none; }
+
+.ss-theme-tile {
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 6px; text-align: left;
+  background: var(--ss-bg); color: var(--ss-text); border: 1px solid var(--ss-border); border-radius: var(--ss-radius);
+  transition: transform var(--ss-dur) ease, box-shadow var(--ss-dur) ease;
+}
+.ss-theme-tile[aria-pressed="true"] { outline: 2px solid var(--ss-accent); outline-offset: 1px; }
+.ss-theme-tile:hover, .ss-theme-tile:focus-visible { transform: translateY(-1px); box-shadow: var(--ss-shadow); }
+[data-motion="off"] .ss-theme-tile { transition: none; }
+[data-motion="off"] .ss-theme-tile:hover, [data-motion="off"] .ss-theme-tile:focus-visible { transform: none; }
+.ss-theme-swatch { display: flex; height: 22px; overflow: hidden; border-radius: calc(var(--ss-radius) / 2); }
+.ss-theme-swatch > span { flex: 1; }
+
+.ss-empty-glyph {
+  font-size: 44px; line-height: 1; color: var(--ss-accent);
+  text-shadow: 0 0 24px color-mix(in srgb, var(--ss-accent) 45%, transparent);
+  animation: ss-float calc(4s / max(var(--ss-motion), 0.001)) ease-in-out infinite;
+}
+@keyframes ss-float { 50% { transform: translateY(-4px); } }
+[data-motion="off"] .ss-empty-glyph { animation: none; }
+
+.ss-tray-row:hover, .ss-tray-row:focus-visible { background: color-mix(in srgb, var(--ss-accent) 16%, transparent); }
+[data-window="tray-recent"] body { padding: 0; }
+
 @media (prefers-reduced-motion: reduce) {
   :root { --ss-motion-intensity: 0 !important; }
   .ss-blob, .ss-shimmer, .ss-pulse { animation: none; }
+  .ss-new-badge, .ss-empty-glyph { animation: none; }
+  .ss-theme-tile { transition: none; }
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }

@@ -12,6 +12,7 @@ import { useT } from "../i18n";
 import { categoryName } from "../lib/categories";
 import { useView } from "../state/view";
 import { gateReason } from "./AiNotice";
+import { ShareButtons } from "./ShareButtons";
 
 export function SidePanel({ list }: { list: ImageList }) {
   const panel = useView((s) => s.sidePanel);
@@ -41,6 +42,7 @@ function DetailBody({ d }: { d: ImageDetail }) {
     <section aria-label={t("details.title")} className="flex flex-col gap-3">
       <h2 className="m-0 break-all text-sm font-semibold">{d.fileName}</h2>
       <p className="ss-muted m-0 break-all text-xs">{d.absPath}</p>
+      <ShareButtons d={d} />
       <div className="flex items-center gap-2">
         <button type="button" className="ss-btn" aria-pressed={d.favorite} onClick={() => void setFavorite([d.id], !d.favorite)}>★ {t("bar.favorite")}</button>
         <span role="group" aria-label={t("bar.rating")}>

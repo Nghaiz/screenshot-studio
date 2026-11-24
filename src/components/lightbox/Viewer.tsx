@@ -7,11 +7,12 @@ import { useT } from "../../i18n";
 import { PREVIEW_WIDTH, SLIDESHOW_MS } from "../../lib/defaults";
 import { fullUrl, thumbUrl } from "../../lib/ssimg";
 import { useView } from "../../state/view";
+import { ShareButtonsFor } from "../ShareButtons";
 import { pickColor } from "./eyedropper";
 import { Filmstrip } from "./Filmstrip";
 import { clampZoom, ZoomPan } from "./ZoomPan";
 
-export function Viewer({ list, index, quick }: { list: ImageList; index: number; quick: boolean }) {
+export function Viewer({ list, index, quick, single = false }: { list: ImageList; index: number; quick: boolean; single?: boolean }) {
   const t = useT();
   const [zoom, setZoom] = useState(1);
   const [playing, setPlaying] = useState(false);
@@ -19,6 +20,7 @@ export function Viewer({ list, index, quick }: { list: ImageList; index: number;
   const item = list.items[index];
 
   const go = (i: number) => {
+    if (single) return;
     const next = Math.max(0, Math.min(list.total - 1, i));
     list.ensureLoaded(next);
     setZoom(1);
@@ -85,6 +87,7 @@ export function Viewer({ list, index, quick }: { list: ImageList; index: number;
         </button>
         <Btn label={t("lightbox.close")} onClick={() => useView.getState().closeLightbox()} text="✕" />
       </div>
+      {!quick && item && <div className="flex justify-center"><ShareButtonsFor id={item.id} compact /></div>}
       {item ? (
         <ZoomPan
           previewSrc={thumbUrl(item, PREVIEW_WIDTH)}
@@ -98,7 +101,7 @@ export function Viewer({ list, index, quick }: { list: ImageList; index: number;
       ) : (
         <div className="ss-shimmer flex-1 rounded" />
       )}
-      {!quick && <Filmstrip items={list.items} index={index} onGo={go} />}
+      {!quick && !single && <Filmstrip items={list.items} index={index} onGo={go} />}
     </div>
   );
 }

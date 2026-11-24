@@ -4,6 +4,8 @@ import "./index.css";
 import { createQueryClient, Root } from "./Root";
 import { usePrefs } from "./state/prefs";
 import { applyAppearance } from "./themes";
+import { TrayRoot } from "./tray/TrayRecent";
+import { isTrayRecent } from "./tray/window";
 
 async function start() {
   // `VITE_MOCK_IPC=1 npm run dev` runs the UI in a plain browser against 10,000 generated images.
@@ -16,9 +18,12 @@ async function start() {
     });
   }
   applyAppearance(usePrefs.getState());
+  // The tray popup window (4.1) loads this same page; it renders only the recent list.
+  const tray = isTrayRecent();
+  if (tray) document.documentElement.setAttribute("data-window", "tray-recent");
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
-      <Root client={createQueryClient()} />
+      {tray ? <TrayRoot client={createQueryClient()} /> : <Root client={createQueryClient()} />}
     </React.StrictMode>,
   );
 }

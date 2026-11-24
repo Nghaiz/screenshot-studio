@@ -43,7 +43,17 @@ export function useBackendEvents(): void {
       },
       () => void qc.invalidateQueries({ queryKey: qk.sidecar }),
     );
+    // Phase 4.1 live events: a watcher arrival wears a "new" badge; `open-image` (toast click, tray, second launch)
+    // shows that image even when the current filter hides it.
+    const offNew = subscribe("new-screenshot", (e) => useView.getState().markFresh(e.imageId));
+    const offOpen = subscribe("open-image", (e) => {
+      const v = useView.getState();
+      v.closeEditor();
+      v.openLightbox({ mode: "single", id: e.imageId });
+    });
     return () => {
+      offNew();
+      offOpen();
       offChanged();
       offJob();
       offSidecar();

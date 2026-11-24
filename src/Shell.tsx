@@ -1,6 +1,7 @@
 // Main layout once a library root exists: sidebar | top bar / AI notice / filters / action bar / gallery (or a smart
 // tool, lazy-loaded) / status bar | side panel, plus overlays and the one open organize dialog.
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
+import { motion, type Transition } from "motion/react";
 import type { AppInfo } from "@bindings/AppInfo";
 import { useGlobalKeys } from "./commands/globalKeys";
 import { ActionBar } from "./components/ActionBar";
@@ -15,12 +16,14 @@ import { Sidebar } from "./components/Sidebar";
 import { SidePanel } from "./components/SidePanels";
 import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
+import { useMotion } from "./components/useMotion";
 import { useImageList } from "./data/images";
 import { buildQuery, isToolView } from "./lib/query";
 import { usePrefs } from "./state/prefs";
 import { useView } from "./state/view";
 import { Gallery } from "./views/Gallery";
 import { ToolView } from "./views/ToolView";
+import { Editor } from "./editor/Editor";
 
 export function Shell({ info }: { info: AppInfo }) {
   const view = useView((s) => s.view);
@@ -33,6 +36,7 @@ export function Shell({ info }: { info: AppInfo }) {
   const list = useImageList(query, eager);
   const ctx = useMemo(() => ({ list }), [list]);
   useGlobalKeys();
+  const m = useMotion();
 
   return (
     <div className="flex h-full gap-2 p-2">
@@ -41,12 +45,16 @@ export function Shell({ info }: { info: AppInfo }) {
         <TopBar />
         <AiBanner />
         {isToolView(view) ? (
-          <ToolView view={view} />
+          <ViewTransition id={view} fade={m.fade}>
+            <ToolView view={view} />
+          </ViewTransition>
         ) : (
           <>
             <FilterPanel />
             <ActionBar list={list} />
-            <Gallery list={list} />
+            <ViewTransition id={view} fade={m.fade}>
+              <Gallery list={list} />
+            </ViewTransition>
           </>
         )}
         <StatusBar total={list.total} />
@@ -56,8 +64,21 @@ export function Shell({ info }: { info: AppInfo }) {
       <CommandPalette ctx={ctx} />
       <SettingsPanel />
       <ConfirmRecycle />
+      <Editor />
       <Dialogs items={list.items} />
       <Toasts />
     </div>
+  );
+}
+
+/**
+ * Fades a view in when it changes (phase 4.2 polish). Mounts in the click's own commit, no exit wait: the smart views
+ * must render at once (src/__tests__/smartviews.test.tsx); with motion off the transition is instant.
+ */
+function ViewTransition({ id, fade, children }: { id: string; fade: Transition; children: ReactNode }) {
+  return (
+    <motion.div key={id} className="flex min-h-0 flex-1 flex-col" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={fade}>
+      {children}
+    </motion.div>
   );
 }

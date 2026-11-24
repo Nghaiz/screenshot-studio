@@ -8,6 +8,8 @@ import { notify } from "../actions/report";
 import { handleGridKey } from "../commands/gridKeys";
 import { rangeIds } from "../commands/targets";
 import { Cell, cellDomId } from "../components/Cell";
+import { EmptyState } from "../components/EmptyState";
+import { activeFilterCount } from "../lib/query";
 import { SCROLL_IDLE_MS } from "../lib/defaults";
 import { readDragIds, setDragIds, isImageDrag } from "../lib/dnd";
 import type { ImageList } from "../data/images";
@@ -125,7 +127,14 @@ export function Gallery({ list }: { list: ImageList }) {
   if (list.error) {
     return <Centered text={t("grid.error", { message: `${list.error.message}${list.error.detail ? ` (${list.error.detail})` : ""}` })} />;
   }
-  if (!list.loading && list.total === 0) return <Centered text={t("grid.empty")} />;
+  if (!list.loading && list.total === 0) {
+    if (viewName === "trash") return <EmptyState text={t("grid.emptyTrash")} />;
+    if (activeFilterCount(useView.getState().filter) > 0) {
+      const reset = <button type="button" className="ss-btn" onClick={() => useView.getState().resetFilter()}>{t("cmd.resetFilters")}</button>;
+      return <EmptyState text={t("grid.emptyFiltered")} action={reset} />;
+    }
+    return <EmptyState text={t("grid.empty")} />;
+  }
 
   const props: LayoutProps = { scrollRef, width: Math.max(0, size.width - 2 * gap), height: size.height, list, thumbSize, gap, navRef, renderCell };
   const buckets = timeline.data ?? [];

@@ -7,7 +7,9 @@ import { emptyFilter, isToolView, type FilterSpec, type View } from "../lib/quer
 export type Lightbox =
   | { mode: "closed" }
   | { mode: "view" | "quick"; index: number }
-  | { mode: "compare"; ids: [number, number] };
+  | { mode: "compare"; ids: [number, number] }
+  /** One image by id, outside the current list (tray popup, toast click, second launch: `open-image`). */
+  | { mode: "single"; id: number };
 
 export interface Toast {
   id: number;
@@ -34,10 +36,13 @@ export type Dialog =
   | { kind: "rename"; ids: number[] }
   | { kind: "saveFilter" }
   | { kind: "confirm"; request: ConfirmRequest }
-  | { kind: "purge"; ids: number[] };
+  | { kind: "purge"; ids: number[] }
+  | { kind: "convert"; ids: number[] }
+  | { kind: "stitch"; ids: number[] }
+  | { kind: "export"; ids: number[]; format: "zip" | "pdf" };
 
 export type SidePanel = "none" | "details" | "history";
-export type SettingsTab = "appearance" | "ai";
+export type SettingsTab = "library" | "appearance" | "ai";
 /**
  * The degraded-mode banner, at most once per app session: `pending` until the sidecar has settled in a notice state,
  * `shown` while it is up, `done` once dismissed or once the sidecar recovered. Never `shown` again after `done`.
@@ -61,6 +66,10 @@ export interface ViewState {
   confirmRecycle: number[] | null;
   toasts: Toast[];
   jobs: Record<number, JobProgress>;
+  /** The image open in the quick editor (phase 4.2), or null. */
+  editorId: number | null;
+  /** Images that arrived through the watcher this session (`new-screenshot`): they wear a "new" badge until opened. */
+  fresh: ReadonlySet<number>;
   /** Bumped to ask the gallery to scroll `focusIndex` into view (keyboard, timeline scrubber). */
   scrollRequest: number;
 
@@ -89,6 +98,11 @@ export interface ViewState {
   toast: (t: Omit<Toast, "id">) => number;
   dismissToast: (id: number) => void;
   jobProgress: (p: JobProgress) => void;
+  openEditor: (id: number) => void;
+  closeEditor: () => void;
+  markFresh: (id: number) => void;
+  /** Drops the "new" badge (the image was opened). */
+  seen: (id: number) => void;
   clearJob: (jobId: number) => void;
 }
 
@@ -117,6 +131,8 @@ export const useView = create<ViewState>((set) => ({
   toasts: [],
   jobs: {},
   scrollRequest: 0,
+  editorId: null,
+  fresh: new Set(),
 
   setView: (view) => set({ view, ...fresh, selection: new Set(), lightbox: { mode: "closed" } }),
   setFolder: (folder) =>
@@ -153,6 +169,16 @@ export const useView = create<ViewState>((set) => ({
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   jobProgress: (p) => set((s) => ({ jobs: { ...s.jobs, [p.jobId]: p } })),
+  openEditor: (editorId) => set({ editorId, lightbox: { mode: "closed" }, paletteOpen: false, dialog: null }),
+  closeEditor: () => set({ editorId: null }),
+  markFresh: (id) => set((s) => ({ fresh: new Set(s.fresh).add(id) })),
+  seen: (id) =>
+    set((s) => {
+      if (!s.fresh.has(id)) return {};
+      const fresh = new Set(s.fresh);
+      fresh.delete(id);
+      return { fresh };
+    }),
   clearJob: (jobId) =>
     set((s) => {
       const jobs = { ...s.jobs };
