@@ -1,4 +1,4 @@
-// Settings panel, two tabs. Appearance (all stored in localStorage, D9): theme, accent, motion, animated background,
+// Settings panel, three tabs. Library (phase 4.2): roots, watcher, hotkey, autostart, data dir. Appearance (all stored in localStorage, D9): theme, accent, motion, animated background,
 // density, language. AI (phase 3.3): sidecar status, device, setup commands, "Run AI on library"; mounted only while
 // its tab is open. Imported eagerly: a lazy chunk opened the tab on a Suspense fallback for >= 300 ms (phase 3.4b,
 // src/views/ToolView.tsx).
@@ -6,10 +6,12 @@ import type { ReactNode } from "react";
 import { LANGUAGES, useT } from "../i18n";
 import { usePrefs } from "../state/prefs";
 import { useView, type SettingsTab } from "../state/view";
-import { DENSITIES, MOTION_LEVELS, prefersReducedMotion, THEME_IDS } from "../themes";
+import { applyAppearance, DENSITIES, MOTION_LEVELS, prefersReducedMotion, THEME_IDS, type ThemeId } from "../themes";
 import AiSettings from "./settings/AiSettings";
+import LibrarySettings from "./settings/LibrarySettings";
 
-const TABS: { id: SettingsTab; key: "settings.tabAppearance" | "settings.tabAi" }[] = [
+const TABS: { id: SettingsTab; key: "settings.tabLibrary" | "settings.tabAppearance" | "settings.tabAi" }[] = [
+  { id: "library", key: "settings.tabLibrary" },
   { id: "appearance", key: "settings.tabAppearance" },
   { id: "ai", key: "settings.tabAi" },
 ];
@@ -48,7 +50,7 @@ function SettingsBody() {
         ))}
       </div>
       <div role="tabpanel" id="ss-settings-tabpanel" aria-labelledby={`ss-settings-tab-${tab}`} className="flex flex-col gap-4">
-        {tab === "ai" ? <AiSettings /> : <Appearance />}
+        {tab === "ai" ? <AiSettings /> : tab === "library" ? <LibrarySettings /> : <Appearance />}
       </div>
     </div>
   );
@@ -60,13 +62,7 @@ function Appearance() {
   return (
     <>
       <Field label={t("settings.theme")}>
-        <div className="grid grid-cols-2 gap-1">
-          {THEME_IDS.map((id) => (
-            <button key={id} type="button" className="ss-btn justify-start" aria-pressed={p.theme === id} onClick={() => p.set({ theme: id })}>
-              {t(`theme.${id}`)}
-            </button>
-          ))}
-        </div>
+        <ThemeGallery />
       </Field>
 
       <Field label={t("settings.accent")}>
@@ -119,6 +115,31 @@ function Choice<T extends string>(props: { values: readonly T[]; current: T; lab
       {props.values.map((v) => (
         <button key={v} type="button" className="ss-btn" aria-pressed={props.current === v} onClick={() => props.onPick(v)}>
           {props.label(v)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Theme gallery: each tile is drawn in its own theme (theme files select on any `[data-theme]` element), and
+ * hovering or focusing a tile previews it on the whole app; leaving restores the chosen theme.
+ */
+function ThemeGallery() {
+  const t = useT();
+  const p = usePrefs();
+  const preview = (theme: ThemeId | null) => applyAppearance({ theme: theme ?? p.theme, accent: p.accent, motion: p.motion, density: p.density });
+  return (
+    <div className="grid grid-cols-2 gap-2" onMouseLeave={() => preview(null)} onBlur={() => preview(null)}>
+      {THEME_IDS.map((id) => (
+        <button key={id} type="button" data-theme={id} aria-pressed={p.theme === id} className="ss-theme-tile"
+          onMouseEnter={() => preview(id)} onFocus={() => preview(id)} onClick={() => p.set({ theme: id })}>
+          <span className="ss-theme-swatch" aria-hidden>
+            <span style={{ background: "var(--ss-accent)" }} />
+            <span style={{ background: "var(--ss-surface)" }} />
+            <span style={{ background: "var(--ss-text)" }} />
+          </span>
+          <span className="text-xs">{t(`theme.${id}`)}</span>
         </button>
       ))}
     </div>

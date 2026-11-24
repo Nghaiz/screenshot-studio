@@ -11,6 +11,7 @@ import type { ImageSummary } from "@bindings/ImageSummary";
 import { useT } from "../i18n";
 import { GRID_THUMB_WIDTH, THUMB_SETTLE_MS } from "../lib/defaults";
 import { thumbUrl } from "../lib/ssimg";
+import { useView } from "../state/view";
 
 export interface CellProps {
   index: number;
@@ -43,6 +44,7 @@ function CellImpl({ index, item, focused, selected, style, variant = "tile", onP
   const t = useT();
   const ready = item && item.thumbState === "ok";
   const settled = useSettled(ready ? item.id : undefined, THUMB_SETTLE_MS);
+  const fresh = useView((s) => item !== undefined && s.fresh.has(item.id));
   return (
     <div
       id={cellDomId(index)}
@@ -74,6 +76,7 @@ function CellImpl({ index, item, focused, selected, style, variant = "tile", onP
       </div>
       {variant === "row" && item && <RowText item={item} />}
       {variant === "tile" && item && <Badges item={item} cloudLabel={t("grid.cloudOnly")} />}
+      {fresh && <span className="ss-new-badge" data-testid="new-badge">{t("grid.new")}</span>}
     </div>
   );
 }

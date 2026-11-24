@@ -1,4 +1,4 @@
-// Mock backend for the UI lane (phases 1.3, 2.2, 3.3): `mockIPC` from @tauri-apps/api/mocks answering every command
+// Mock backend for the UI lane (phases 1.3, 2.2, 3.3, 4.2): `mockIPC` from @tauri-apps/api/mocks answering every command
 // the browse, organize and smart UI sends, over a deterministic 10,000-image catalog. Used by the tests and by
 // `VITE_MOCK_IPC=1 npm run dev` in a plain browser. Request/response types come from @bindings only.
 import { clearMocks, mockConvertFileSrc, mockIPC } from "@tauri-apps/api/mocks";
@@ -8,12 +8,14 @@ import type { CountBy } from "@bindings/CountBy";
 import type { CommandMap } from "@bindings/commands";
 import type { ImageSummary } from "@bindings/ImageSummary";
 import type { LibraryRoot } from "@bindings/LibraryRoot";
+import type { PiiFinding } from "@bindings/PiiFinding";
 import type { SidecarStatus } from "@bindings/SidecarStatus";
 import { PREVIEW_WIDTH } from "../lib/defaults";
 import type { EventMap, EventName } from "../lib/events";
 import { setImageUrlOverride } from "../lib/ssimg";
 import { appError, countBy, queryImages, timeline } from "./catalog";
 import { generateImages, MOCK_IMAGE_COUNT, MOCK_NOW_MS, mockRoot, placeholderUrl } from "./data";
+import { createLive } from "./live";
 import { createOrganize } from "./organize";
 import { createSmart, MOCK_SIDECAR_ABSENT } from "./smart";
 
@@ -22,6 +24,8 @@ export interface MockCall {
   payload: unknown;
   /** What the mock answered (absent while running or when it threw). */
   result?: unknown;
+  /** Request headers (`invoke` options); only the raw-body command sends any. */
+  headers?: Record<string, string>;
 }
 
 export interface MockHandle {
@@ -34,6 +38,10 @@ export interface MockHandle {
   fail: (cmd: keyof CommandMap, error: AppError | null) => void;
   /** Calls a mock command directly (test setup: create tags, albums, ...), bypassing the call log. */
   invoke: <K extends keyof CommandMap>(cmd: K, req: CommandMap[K]["req"]) => CommandMap[K]["res"];
+  /** Gives an image OCR text (`get_image` `ocrText`, `hasText` true). */
+  setOcr: (id: number, text: string) => void;
+  /** What `detect_pii` finds in an image (default: nothing). */
+  setPii: (id: number, findings: PiiFinding[]) => void;
   uninstall: () => void;
 }
 
@@ -47,6 +55,16 @@ export interface MockOptions {
 type Handler = (req: never) => unknown;
 /** Months and folders come ordered by key, like ss-core `smart::stats` (the other lists largest first, as countBy). */
 const byKey = (list: CountBy[]) => list.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+/** Plugin commands that answer null in the mock (clipboard, opener, drag-out). */
+const PLUGIN_NULL = new Set([
+  "plugin:clipboard-manager|write_text", "plugin:opener|reveal_item_in_dir", "plugin:opener|open_path", "plugin:drag|start_drag",
+]);
+
+function headersOf(h: unknown): Record<string, string> | undefined {
+  if (!h) return undefined;
+  if (h instanceof Headers) return Object.fromEntries(h.entries());
+  return { ...(h as Record<string, string>) };
+}
 const MISSING_IMAGE_URL = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
 export function installMockIpc(opts: MockOptions = {}): MockHandle {
@@ -72,6 +90,8 @@ export function installMockIpc(opts: MockOptions = {}): MockHandle {
   const organize = createOrganize({ images, byId, roots, get, changed }, () => MOCK_NOW_MS);
   const { mutate, filterContext: ctx } = organize;
   const smart = createSmart({ images, byId, settings, ctx, fire, timers, nextJobId: () => ++jobSeq }, opts.sidecar ?? MOCK_SIDECAR_ABSENT);
+
+  const live = createLive({ images, byId, get, mutate, changed, fire, timers, nextJobId: () => ++jobSeq });
 
   const visible = () => images.filter((i) => !i.missing);
   const counts = () => {
@@ -102,7 +122,7 @@ export function installMockIpc(opts: MockOptions = {}): MockHandle {
       const img = get(id);
       const root = roots.find((r) => r.id === img.rootId)?.path ?? "mock";
       const absPath = [root, img.folder, img.fileName].filter(Boolean).join("\\");
-      return { ...img, absPath, createdMs: img.takenMs, contentHash: null, ...organize.detailOf(id), ocrText: null, categories: [], blurScore: null };
+      return { ...img, absPath, createdMs: img.takenMs, contentHash: null, ...organize.detailOf(id), ocrText: live.ocrText(id), categories: [], blurScore: null };
     },
     get_timeline: ({ query, bucket }) => ({ buckets: timeline(images, query, bucket, ctx) }),
     get_settings: () => ({ ...settings }),
@@ -112,6 +132,7 @@ export function installMockIpc(opts: MockOptions = {}): MockHandle {
     },
     ...organize.handlers,
     ...smart.handlers,
+    ...live.handlers,
     trash_images: ({ imageIds }) => mutate("trash", imageIds, (i) => (i.trashedAt = MOCK_NOW_MS)),
     restore_images: ({ imageIds }) => mutate("restore", imageIds, (i) => (i.trashedAt = null)),
     recycle_images: ({ imageIds }) => mutate("recycle", imageIds, (i) => (i.missing = true)),
@@ -137,12 +158,23 @@ export function installMockIpc(opts: MockOptions = {}): MockHandle {
   };
 
   mockConvertFileSrc("windows");
+  let pendingHeaders: Record<string, string> | undefined;
   mockIPC(
     (cmd, payload) => {
-      const call: MockCall = { cmd, payload };
+      const call: MockCall = { cmd, payload, headers: pendingHeaders };
       calls.push(call);
-      if (cmd === "plugin:clipboard-manager|write_text") return null;
+      if (PLUGIN_NULL.has(cmd)) return null;
       if (cmd === "plugin:dialog|open") return "D:\\Mock\\Screenshots";
+      if (cmd === "plugin:dialog|save") {
+        const name = (payload as { options?: { defaultPath?: string } } | undefined)?.options?.defaultPath ?? "export";
+        return `D:\\Mock\\Export\\${name}`;
+      }
+      if (cmd === "save_edited_image") {
+        const failure = failures.get(cmd);
+        if (failure) throw failure;
+        call.result = JSON.parse(JSON.stringify(live.saveEdited(payload, pendingHeaders ?? {})));
+        return call.result;
+      }
       const h = handlers[cmd as keyof CommandMap] as Handler | undefined;
       if (!h) throw appError("internal", `mock: command \`${cmd}\` is not implemented`);
       const failure = failures.get(cmd);
@@ -153,6 +185,24 @@ export function installMockIpc(opts: MockOptions = {}): MockHandle {
     },
     { shouldMockEvents: true },
   );
+  // mockIPC drops `invoke`'s third argument, so the raw-body command's headers are captured here (the mock's
+  // async invoke runs the handler synchronously, before its first await). `emit_to` (tray popup -> main) is
+  // logged and delivered as a plain emit: the test page is every window at once.
+  const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown, o?: { headers?: unknown }) => Promise<unknown> } }).__TAURI_INTERNALS__;
+  const inner = internals.invoke;
+  internals.invoke = (cmd, args, options) => {
+    if (cmd === "plugin:event|emit_to") {
+      const a = args as { target: unknown; event: string; payload: unknown };
+      calls.push({ cmd, payload: a });
+      return inner("plugin:event|emit", { event: a.event, payload: a.payload });
+    }
+    pendingHeaders = headersOf(options?.headers);
+    try {
+      return inner(cmd, args, options);
+    } finally {
+      pendingHeaders = undefined;
+    }
+  };
   // A URL for an id the mock no longer has (purged while a cell is still on screen) is a broken image, like
   // the real scheme's 404, never an exception during render.
   setImageUrlOverride((ref, what) => {
@@ -176,6 +226,8 @@ export function installMockIpc(opts: MockOptions = {}): MockHandle {
       if (!h) throw appError("internal", `mock: command \`${cmd}\` is not implemented`);
       return run(h, req);
     },
+    setOcr: live.setOcr,
+    setPii: live.setPii,
     uninstall: () => {
       timers.forEach(clearTimeout);
       timers.clear();

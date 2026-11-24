@@ -4,6 +4,7 @@
 // against the mock and assert that.
 import type { SidecarStatus } from "@bindings/SidecarStatus";
 import { askRecycle, notify, pickAndAddFolder, reindex, restoreImages, trashImages, undo } from "../actions/images";
+import { copyImage } from "../actions/share";
 import { runAiOnLibrary } from "../actions/smart";
 import { cached } from "../data/organize";
 import type { ImageList } from "../data/images";
@@ -40,10 +41,11 @@ const prefs = () => usePrefs.getState();
 const view = () => useView.getState();
 
 /** Opens an organize dialog for the selection (or the focused image). */
-const dialogFor = (kind: "tags" | "album" | "rename" | "move" | "copy") => ({ list }: CommandContext) => {
+const dialogFor = (kind: "tags" | "album" | "rename" | "move" | "copy" | "convert" | "stitch" | "zip" | "pdf") => ({ list }: CommandContext) => {
   const ids = targetIds(list.items);
   if (ids.length === 0) return notify("actions.nothingSelected");
   if (kind === "move" || kind === "copy") view().openDialog({ kind: "move", ids, mode: kind, destDir: null });
+  else if (kind === "zip" || kind === "pdf") view().openDialog({ kind: "export", ids, format: kind });
   else view().openDialog({ kind, ids });
 };
 
@@ -99,6 +101,20 @@ export const PALETTE_COMMANDS: readonly PaletteCommand[] = [
   simple("images.move", "cmd.move", dialogFor("move")),
   simple("images.copy", "cmd.copy", dialogFor("copy")),
   simple("images.rename", "cmd.rename", dialogFor("rename")),
+  simple("images.edit", "cmd.edit", ({ list }) => {
+    const first = targetIds(list.items)[0];
+    if (first === undefined) return notify("actions.nothingSelected");
+    view().openEditor(first);
+  }),
+  simple("images.copyImage", "cmd.copyImage", ({ list }) => {
+    const first = targetIds(list.items)[0];
+    if (first === undefined) return notify("actions.nothingSelected");
+    return copyImage(first);
+  }),
+  simple("images.convert", "cmd.convert", dialogFor("convert")),
+  simple("images.stitch", "cmd.stitch", dialogFor("stitch")),
+  simple("images.exportZip", "cmd.exportZip", dialogFor("zip")),
+  simple("images.exportPdf", "cmd.exportPdf", dialogFor("pdf")),
   simple("filters.toggle", "cmd.toggleFilters", () => view().setFiltersOpen(!view().filtersOpen)),
   simple("filters.reset", "cmd.resetFilters", () => view().resetFilter()),
   simple("filters.save", "cmd.saveFilter", () => view().openDialog({ kind: "saveFilter" })),
@@ -110,6 +126,7 @@ export const PALETTE_COMMANDS: readonly PaletteCommand[] = [
     await pickAndAddFolder();
   }),
   simple("settings.open", "cmd.settings", () => view().setSettings(true, "appearance")),
+  simple("settings.library", "cmd.librarySettings", () => view().setSettings(true, "library")),
   simple("settings.ai", "cmd.aiSettings", () => view().setSettings(true, "ai")),
   simple("ai.run", "cmd.runAi", () => runAiOnLibrary(runnableTasks(cached<SidecarStatus>(qk.sidecar)))),
 ];

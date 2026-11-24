@@ -4,6 +4,7 @@
 import type { ImageList } from "../data/images";
 import { askRecycle, restoreImages, setFavorite, setRating, trashImages } from "../actions/images";
 import { removeFromAlbum } from "../actions/organize";
+import { copyImage } from "../actions/share";
 import { targetIds } from "../commands/targets";
 import { useAlbums } from "../data/organize";
 import { useT } from "../i18n";
@@ -48,6 +49,20 @@ export function ActionBar({ list }: { list: ImageList }) {
       <button type="button" className="ss-btn" onClick={() => open("move")}>{t("bar.move")}</button>
       <button type="button" className="ss-btn" onClick={() => open("copy")}>{t("bar.copy")}</button>
       <button type="button" className="ss-btn" onClick={() => open("rename")}>{t("bar.rename")}</button>
+      <span role="group" aria-label={t("bar.share")} className="flex gap-1.5">
+        <button type="button" className="ss-btn" onClick={() => {
+          const first = ids()[0];
+          if (first !== undefined) v().openEditor(first);
+        }}>{t("share.edit")}</button>
+        <button type="button" className="ss-btn" onClick={() => {
+          const first = ids()[0];
+          if (first !== undefined) void copyImage(first);
+        }}>{t("share.copyImage")}</button>
+        <button type="button" className="ss-btn" onClick={() => open("convert")}>{t("bar.convert")}</button>
+        <button type="button" className="ss-btn" onClick={() => open("stitch")}>{t("bar.stitch")}</button>
+        <button type="button" className="ss-btn" onClick={() => open("zip")}>{t("bar.exportZip")}</button>
+        <button type="button" className="ss-btn" onClick={() => open("pdf")}>{t("bar.exportPdf")}</button>
+      </span>
       <button type="button" className="ss-btn" aria-label={t("bar.favorite")} title={t("bar.favorite")} onClick={() => {
         const target = ids();
         const favs = new Set(list.items.filter((i) => i.favorite).map((i) => i.id));
@@ -64,10 +79,11 @@ export function ActionBar({ list }: { list: ImageList }) {
     </div>
   );
 
-  function open(kind: "tags" | "album" | "move" | "copy" | "rename") {
+  function open(kind: "tags" | "album" | "move" | "copy" | "rename" | "convert" | "stitch" | "zip" | "pdf") {
     const target = ids();
     if (target.length === 0) return;
     if (kind === "move" || kind === "copy") v().openDialog({ kind: "move", ids: target, mode: kind, destDir: null });
+    else if (kind === "zip" || kind === "pdf") v().openDialog({ kind: "export", ids: target, format: kind });
     else v().openDialog({ kind, ids: target });
   }
 }

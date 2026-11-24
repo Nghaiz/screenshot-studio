@@ -1,7 +1,10 @@
 // Lightbox overlay (modal dialog). Esc closes; focus moves into the dialog and back to the grid on close.
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type { ImageList } from "../../data/images";
+import { useImageDetail } from "../../data/library";
+import { toAppError } from "../../lib/ipc";
+import { emptyQuery } from "../../lib/query";
 import { useT } from "../../i18n";
 import { useView } from "../../state/view";
 import { useMotion } from "../useMotion";
@@ -22,7 +25,17 @@ export function Lightbox({ list }: { list: ImageList }) {
     return () => back?.focus();
   }, [open]);
 
-  const name = lb.mode === "view" || lb.mode === "quick" ? (list.items[lb.index]?.fileName ?? "") : "";
+  const shownId = lb.mode === "view" || lb.mode === "quick" ? list.items[lb.index]?.id : lb.mode === "single" ? lb.id : undefined;
+  // Opening an image drops its "new" badge (phase 4.2).
+  useEffect(() => {
+    if (shownId !== undefined) useView.getState().seen(shownId);
+  }, [shownId]);
+
+  const single = useImageDetail(lb.mode === "single" ? lb.id : null);
+  const name =
+    lb.mode === "view" || lb.mode === "quick" ? (list.items[lb.index]?.fileName ?? "")
+    : lb.mode === "single" ? (single.data?.fileName ?? "")
+    : "";
   return (
     <AnimatePresence>
       {open && (
@@ -46,8 +59,20 @@ export function Lightbox({ list }: { list: ImageList }) {
         >
           {lb.mode === "compare" && <Compare ids={lb.ids} />}
           {(lb.mode === "view" || lb.mode === "quick") && <Viewer list={list} index={lb.index} quick={lb.mode === "quick"} />}
+          {lb.mode === "single" && <SingleViewer id={lb.id} />}
         </motion.div>
       )}
     </AnimatePresence>
   );
+}
+
+/** One image by id (`open-image`): the viewer over a one-item list, so it may be outside the current filter. */
+function SingleViewer({ id }: { id: number }) {
+  const detail = useImageDetail(id);
+  const one = useMemo<ImageList | null>(
+    () => (detail.data ? { query: emptyQuery(), items: [detail.data], total: 1, loading: false, error: null, ensureLoaded: () => {} } : null),
+    [detail.data],
+  );
+  if (detail.isError) return <p role="alert" className="ss-panel m-0 p-4 text-sm">{toAppError(detail.error).message}</p>;
+  return one ? <Viewer list={one} index={0} quick={false} single /> : <div className="ss-shimmer h-full w-full rounded" aria-busy="true" />;
 }

@@ -3,9 +3,12 @@ import type { ImageSummary } from "@bindings/ImageSummary";
 import { useView } from "../../state/view";
 import { AlbumEditDialog, AlbumPickDialog, SaveFilterDialog } from "./AlbumDialogs";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ConvertDialog } from "./ConvertDialog";
+import { ExportDialog } from "./ExportDialog";
 import { MoveDialog } from "./MoveDialog";
 import { PermanentDeleteDialog } from "./PermanentDeleteDialog";
 import { RenameDialog } from "./RenameDialog";
+import { StitchDialog } from "./StitchDialog";
 import { TagAssignDialog, TagEditDialog } from "./TagDialogs";
 
 export function Dialogs({ items }: { items: readonly ImageSummary[] }) {
@@ -30,5 +33,11 @@ export function Dialogs({ items }: { items: readonly ImageSummary[] }) {
       return <ConfirmDialog request={d.request} />;
     case "purge":
       return <PermanentDeleteDialog ids={d.ids} items={items} />;
+    case "convert":
+      return <ConvertDialog ids={d.ids} />;
+    case "stitch":
+      return <StitchDialog ids={d.ids} />;
+    case "export":
+      return <ExportDialog ids={d.ids} kind={d.format} />;
   }
 }
