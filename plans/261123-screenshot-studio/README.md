@@ -86,7 +86,7 @@ Re-score (phase 3.1b, 2026-11-24, same Accept, 3/3 PASS, 42 + 6 + 5 tests): Viet
   `<HF_HOME>\easyocr` (`--prefetch`; without it `ocr` is disabled with a named reason). OCR forecast row: Vietnamese
   tone-marked words now PASS in `test_ocr.py`; the real-library search check stays with 3.4.
 Re-score (phase 3.4, 2026-11-24, `node scripts/accept/p3.mjs` 17/17 PASS and `node scripts/accept/p2.mjs` 11/11 PASS
-on the installed release build):
+in 3 runs on the installed release build):
 - OCR search finds known Vietnamese and English text (fixtures): MEASURED PASS. Generated `Hoá đơn 2026 INVOICE-7731`
   (no file name carries it): `INVOICE-7731` and `hoa don` both hit it at rank 1; OCR + embed of 52 images on CUDA in
   23.6 s including sidecar start. Planted duplicates: exact = {#7, its copy}, similar = {#9, its JPEG} (+ the exact
@@ -97,14 +97,28 @@ on the installed release build):
   checkout fallback disabled (`SS_SIDECAR_DIR` -> a missing dir); seen red with the bundled `sidecar` or `contracts`
   dir renamed (state `absent` / `error`). No console window: the venv launcher and its child interpreter share one
   console created with `CREATE_NO_WINDOW` (GetConsoleWindow = 0 for both); the sidecar exits with the app (WM_CLOSE).
-- Memory (#31), app + WebView2 with the sidecar's subtree cut out: gated scroll peak 463 / 472 MB (2 runs), first
-  screen 338-339 MB, visit-all 732-733 MB peak / 557 MB after idle, fps p50 4.20 ms p95 4.30 ms (unchanged). Before
+- Memory (#31), app + WebView2 with the sidecar's subtree cut out: gated scroll peak 463 / 472 MB (2 runs), 476 MB in
+  a third run after the AI pass (OCR text and embeddings on 5,662 images), first screen 338-340 MB, visit-all
+  732-737 MB peak / 557-562 MB after idle, fps p50 4.20 ms p95 4.30 ms (unchanged). Before
   the fix: 495-519 MB (FAIL 512 in the first run), visit-all 797 / 605 MB. Sidecar (INFO, not gated): ~6.7 GB
   private (commit; CUDA/torch reserve), 2.96 GB working set, 1.64 GB dedicated GPU memory (nvidia-smi reports
   `[N/A]` per process under WDDM; the MB come from the Windows GPU Process Memory counters).
+- Real-library AI pass (step 3; `ssctl ai --tasks ocr,embed,classify,color --wait` with the app closed, the
+  orchestrator's route instead of the in-app "Run AI on library"): wall 9,097 s (2 h 32 min), sidecar `ready` on
+  CUDA. Every task: 6,260 candidates, 5,662 done, 0 failed, 598 skipped as cloud-only. OCR took ~2 h 26 min of it
+  (~1.55 s per image, the 3.1b RapidOCR + EasyOCR pipeline); embed, classify and colour together ~5 min. The Forecast
+  effect "first OCR+CLIP pass 10 / 20 / 60 min" was 2.5x under even the high figure: OCR, not CLIP, sets the time.
+- Real-library spot checks (counts only): `search "chiếu"` (a word read in a local screenshot) 141 hits, every one
+  with OCR text and none by file name; `chieu` gives the same 141 (tone marks folded). `dupes --mode exact`: 9 groups
+  of 2 (18 images), each group one content hash. `--mode similar`: 219 groups, 549 images (179 pairs, largest 27),
+  every exact group inside a similar group.
 - New risks: (1) the installed sidecar writes `__pycache__` under `<install dir>\sidecar` at first start, which
-  the uninstaller does not list (leftover folder after an uninstall, 4.3); (2) the memory gate's headroom is ~30 MB
-  and depends on two WebView2 behaviours (LOW target, shimmer frames), docs/lessons.md phase 3.4.
+  the uninstaller does not list (leftover folder after an uninstall, 4.3); (2) the memory gate's headroom is 24-37 MB
+  and depends on two WebView2 behaviours (LOW target, shimmer frames), docs/lessons.md phase 3.4; (3) `similar`
+  groups near-blank images together: one real group of 17 has dHash popcounts 0-7, aspect 0.33-6.5 and a 1x1 px
+  member, so flat images collide however different they are. With its opt-in "similar" box ticked, the cleanup
+  wizard would propose 16 of them for the in-app trash. No phase owns a fix yet (e.g. skip hashes with few set bits
+  in `similar` mode).
 Not checked: ts-rs 12 `#[ts(type)]` behaviour on Option/Vec fields (from library knowledge; contract_test bans `bigint` to catch it); Tauri raw-body IPC + headers API; `tauri-plugin-drag` version; Rust/Tauri build on this machine (Rust not installed yet); WebView2 CDP attach in a dev build; RapidOCR Vietnamese; OneDrive Files On-Demand state of the 5,604 files (how many are cloud-only); SigLIP i18n quality on Vietnamese queries; NSIS `/D=` with currentUser mode on D:.
 
 ## Finish ETA

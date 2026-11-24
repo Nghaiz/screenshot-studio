@@ -51,6 +51,22 @@ to a kit. Newest first. One entry: what happened, why, what to do.
   `GetConsoleWindow()` for each sidecar process (hwnd 0 = a console without a window, `CREATE_NO_WINDOW`). Proved red
   with `cmd /c start "" cmd /c ...` (both signals fire) and green with a hidden child.
 
+### OCR, not CLIP, sets the time of a whole-library AI pass
+- **Seen:** the real pass (5,662 local images, CUDA) took 2 h 32 min: OCR ~2 h 26 min (~1.55 s per image), embed,
+  classify and colour together ~5 min. The plan forecast 10 / 20 / 60 min and 3.1b measured 0.88 s per image on 5
+  samples; real screenshots are larger and carry more text.
+- **Do:** forecast an AI pass from the OCR rate on a real-size sample of the library, and run it in the background.
+
+### dHash puts near-blank images in one "similar" group
+- **Seen:** on the real library one `similar` group held 17 images from 1x1 px to 2468 px wide, aspect 0.33-6.5,
+  dHash popcounts 0-7: a flat image has almost no gradient bits, so any two are within the Hamming limit.
+- **Do:** treat a hash with few set bits as "no signal" before trusting a similar group (not fixed in 3.4).
+
+### A WAL catalog does not open read-only while it is closed
+- **Seen:** `node:sqlite` `readOnly: true` on `catalog.sqlite` failed with "unable to open database file" while
+  no `-wal`/`-shm` files existed (nothing had it open).
+- **Do:** for a read-only look at the real catalog, copy the file to %TEMP% and open the copy.
+
 ## 2026-11-24 — phase 3.3
 
 ### The mock and the backend can disagree on list order the contract never fixed
