@@ -141,6 +141,71 @@ Re-score (phase 3.4b, 2026-11-24, real-library polish: `node scripts/accept/p3.m
 - Risks (1) and (3) of phase 3.4 are closed; (2) stands. New: the real catalog has no `blur_score` yet (indexed before
   3.2), so the cleanup wizard's first Start reads all 5,662 thumbnails (`backfill_blur`), not measured here.
   P3 confidence: done (Accept green).
+Re-score (phase 3.4c first rule, superseded by the pixel stage below; 2026-11-24, `similar` = near-identical copies, Deferred decision #35: `node scripts/accept/p3.mjs`
+23/23 PASS and `node scripts/accept/p2.mjs` 11/11 PASS in 3 runs on the installed release build; counts only):
+- Real library, `ssctl --data-dir D:\IOT_Tools\data\ScreenshotStudio dupes --mode similar --json` (Hamming 6):
+  213 groups / 519 images / 306 copies / largest 27 -> **16 / 32 / 16 / 2**; `exact` unchanged (9 groups of 2, all 9
+  inside `similar` groups). The 27-image group (one diagram layout, lowest id 23) is gone: its seed is in no group
+  and 8 of its members form 4 pairs, each pair with identical OCR text. The 9-image group (lowest id 165): none of its
+  members is in a group. Audit of the 16 seed-member pairs: OCR text similarity min 0.961 / p10 0.963 / median 1.000,
+  cosine min 0.967 / p10 0.973 / median 1.000, none confirmed by hashes alone. At Hamming 20 (the slider's maximum):
+  399 / 5,048 copies / largest 492 -> 20 / 20 / 2 (text min 0.909, cosine min 0.963). With the AI rows ignored (a
+  catalog copy without `ocr_result` and `embedding`): 10 groups / 10 copies (the exact pairs and 1 same-size copy).
+- Candidate stage: 875 pairs within Hamming 6, of which 59 have a shape a copy could have (434,069 and 2,321 at 20).
+  pHash: populated for all 5,662 indexed images, but 461 of the 875 pairs are at pHash distance 0, so it only
+  backs the hash-only rule.
+- Synthetic copies (20 LOCAL owner screenshots copied read-only to %TEMP%, 6 variants each, indexed with OCR +
+  embed in a temp data dir; images and catalog deleted after): candidate pairs within Hamming 6 -> confirmed:
+  JPEG q85 19 -> 17, 75% resize 20 -> 16, 50% resize 20 -> 13, cursor 20 -> 17, 1.5% scroll 14 -> 12, notification
+  toast 16 -> 7 (3 of the 9 misses are toasts on 280 px-high crops). With AI rows ignored: JPEG 17, cursor 18, toast
+  6, scroll 2, resizes 0. Conservative by design: notification-sized overlays and 50% downscales are missed most.
+- Labelled real pairs (OCR line diffs read in a scratch dir, nothing kept): 11 of one window whose content changed,
+  text 0.633-0.847; 2 of one template with other content, text
+  0.923 / 0.966 but cosine 0.955 / 0.908; 4 copies (a clock tick, an overlay, OCR noise), text 0.961-0.996.
+- Speed, installed app on the real data dir, IPC over CDP (7 calls x 2 runs, ms): `find_duplicates` similar at
+  Hamming 6 72-75 -> 23-25; at 20 (the slider's maximum) 18-20 -> 52-56 (the old figure rode on its huge groups:
+  the first seeds took hundreds of images, so few BK-tree queries ran); `get_stats` 82-88 -> 33-36; exact
+  4.4-5.0 -> 5.0-6.3. The candidate stage scans all 15.7M hash pairs of a flat array instead of querying a BK-tree,
+  and OCR trigram profiles are built only for pairs that reach the text check (docs/lessons.md phase 3.4c).
+  `smart-view-ready` (cold start, real data dir): stats 29, duplicates 23, cleanup 8, settings-ai 17 ms (3.4b: 29 / 22 /
+  12 / 17). New `p3.mjs` check `dupes-similar-no-ai`: the planted JPEG of fixture #9 is found before the AI pass too.
+- Memory (#31), `p2.mjs` x3: gated scroll peak 473 / 474 / 470 MB (3.4b: 471 / 476 / 478), first screen 340-344 MB,
+  visit-all 729-736 MB peak / 555-562 MB after idle, fps p50 4.20 ms p95 4.30 ms: unchanged, as expected for a
+  backend-only change. The orchestrator's cua-driver re-check then found 5 of the 16 pairs to be different pictures.
+Re-score (phase 3.4c pixel stage, 2026-11-24, after the orchestrator's cua-driver re-check; Deferred decision #35
+updated: `node scripts/accept/p2.mjs` 11/11 PASS in 3 runs and `node scripts/accept/p3.mjs` 22/23 on the installed
+release build, see the last line; counts only):
+- Real library, `ssctl --data-dir D:\IOT_Tools\data\ScreenshotStudio dupes --mode similar --json`: Hamming 6
+  16 groups / 16 copies / largest 2 -> **9 / 9 / 2**, exactly the 9 pixel-identical pairs of the orchestrator's
+  list; no member of the 5 pairs of different pictures or of the 2 unverified pairs is in any group. Hamming 20
+  (the slider's maximum) 20 / 20 / 2 -> 9 / 9 / 2, the same 9. With the AI rows ignored (a catalog copy without
+  `ocr_result` and `embedding`, its grid thumbnails copied beside it, deleted after): 9 / 9 / 2 at 6 and at 20,
+  the same 9 (the first rule: 10 / 10). `exact` unchanged (the same 9 pairs).
+- Pixel score (`smart::pixel_check::block_diff`: the largest ~4 px block mean of the smoothed luma difference of
+  the two grid thumbnails, in luma levels; the Rust code and a Python model of it agree within 0.13): the 9
+  identical real pairs 0; the 5 pairs of different pictures 47.6-151.3; the 2 unverified pairs 29.2 and 91.0,
+  about 3 and 9 times the largest re-encode or resize, so not grouped. Synthetic, the same 20 local screenshots
+  (copied read-only to %TEMP% and indexed in a temp data dir; images, thumbnails and catalog deleted after):
+  JPEG q85 and q70, 75 / 50 / 33% resizes and 50% + JPEG, 120 pairs, max 9.8 (p90 7.3), all within
+  `BLOCK_DIFF_MAX` 12; above it: crow's-foot strokes (~1.5% of the width, 2 px lines) 19/20, cursors 18/20,
+  notifications 20/20, 1.5% scrolls 20/20, a changed 8% region 12/20 (7 of the 20 pasted regions matched their
+  surroundings and changed no pixel).
+- Choices measured on the same pairs: 3 px blocks let copies reach 16.6; 8 px blocks let different pictures fall
+  to 20.8 and one unverified pair to 14.5; without the [1, 2, 1] smoothing 50% resizes reached 28.8 (a
+  thumbnail 1 px shorter than the original's); a +-1 px shift tolerance kept copies at 9.8 but let different
+  pictures fall to 20.2.
+- Speed, installed app, real data dir, IPC over CDP (7 calls x 2 runs, ms; first rule -> pixel stage):
+  `find_duplicates` similar at Hamming 6 23-25 -> 32-36 (3.4b: 72-75), at 20 52-56 -> 62-69, `get_stats`
+  33-36 -> 44-50 (3.4b: 82-88), exact 5.0-6.3 -> 4.8-7.7. Only the ~32 thumbnails of the pairs that pass the cheap
+  checks are read and decoded (in parallel, libwebp), so the pixel stage costs ~10 ms. `smart-view-ready` (cold start,
+  real data dir, 2 runs): stats 33, duplicates 25-30, cleanup 8, settings-ai 17 ms (budget 150).
+- Memory (#31), `p2.mjs` x3: 11/11 each; gated scroll peak 461 / 466 / 467 MB (first rule: 473 / 474 / 470), after idle
+  408-417 MB, fps p50 4.20 ms p95 4.30 ms; `cargo test --workspace --locked` 14 binaries / 72 tests, vitest 80. P3 confidence: the duplicate rule is green
+  (`dupes-similar-no-ai`, `dupes-similar`, `smart-view-ready` PASS in all 3 p3 runs); p3's one FAIL is lane-tests'
+  `sidecar/tests/test_ocr.py::test_rapidocr_only_pipeline_stays_selectable`, which starts a second real sidecar
+  beside the fixture's: it passes alone and failed only while the machine's commit charge stood at ~39 of 47.7 GB
+  (an earlier run logged os error 1455, paging file too small). No sidecar file changed in 3.4c; re-run p3 with
+  memory headroom.
 Not checked: ts-rs 12 `#[ts(type)]` behaviour on Option/Vec fields (from library knowledge; contract_test bans `bigint` to catch it); Tauri raw-body IPC + headers API; `tauri-plugin-drag` version; Rust/Tauri build on this machine (Rust not installed yet); WebView2 CDP attach in a dev build; RapidOCR Vietnamese; OneDrive Files On-Demand state of the 5,604 files (how many are cloud-only); SigLIP i18n quality on Vietnamese queries; NSIS `/D=` with currentUser mode on D:.
 
 ## Finish ETA
@@ -365,6 +430,7 @@ Ordered irreversible / costliest first.
 | 32 | Grid thumbnail fit (integration-observed defect, phase 2.3) | `cover` (square crop) / `contain` (whole screenshot over the cell surface) / the 1280 preview in grid cells | `contain` for square cells (Grid layout and Timeline, `.ss-square` in `src/index.css`); Masonry, Justified and List unchanged; no 1280 in the grid. ORCHESTRATOR decision, reversible | MEASURED 2026-11-24 on the real library, devicePixelRatio 1.5: `cover` showed Grid thumbnails a median 5.0x upscaled at size 320 (8.9x at 400), wide screenshots cropped to their middle; `contain`: 0.89x at the saved size 180, 1.51x at 320 (the DPR alone), 2.29x at 400. Masonry and Justified size each box by the image's aspect, so `cover` does not crop them. Cost, A/B on one build with the old rule injected over CDP: gated scroll peak +18-24 MB, visit-all peak +55 MB. The 1280 preview averages 204 KB encoded (6x a grid thumbnail) and Blink keeps every encoded thumbnail it has shown (#31), so it was not used | delete the `.ss-square .ss-cell img` rule in `src/index.css` |
 | 33 | `similar` duplicates and near-blank images (integration-observed defect, phase 3.4) | keep every hash / leave low-information hashes out of `similar` / a per-pair aspect-ratio rule | a dHash with fewer than `DUP_MIN_INFO_BITS` (10) set bits, or fewer than 10 clear bits (`smart::duplicates::is_low_information`), neither seeds nor joins a `similar` group; it stays eligible for `exact`. Stats' `duplicatesSimilar` ("Bản gần giống") counts the same `groups()`, and the slider's help text says it. ORCHESTRATOR decision (conservative, reversible), phase 3.4b | MEASURED 2026-11-24 on a copy of the real catalog (5,662 hashes, counts only): the 13 hashes with 0 set bits are all 1-14 px slivers; every hash with 0-6 set bits had a partner within Hamming 6. Pairs within Hamming 6, by the lower hash's set bits, with aspect ratios within 15% of each other: 0-3 bits 30/231 (13%), 4-6 0/1, 7-9 2/9 (22%); 10-12 16/26 (62%), 13-15 28/36 (78%), 16-19 38/61 (62%), 20-24 419/444 (94%), 25+ 209/303 (69%). The 4 hashes with 58-64 set bits (left-to-right gradients: dHash sets a bit where the right cell is brighter) formed 2 pairs, both of different aspects. 55 hashes are left out (1.0%). `dupes --mode similar` 219 groups / 549 images / 330 copies / largest 27 -> 213 / 519 / 306 / 27 (the group of 17 near-blank images is gone); `exact` unchanged (9 groups of 2) | `DUP_MIN_INFO_BITS = 0` in `crates/ss-core/src/smart/duplicates.rs` |
 | 34 | How the smart views and Settings > AI load (integration-observed defect, phase 3.4) | lazy chunks behind `Suspense` (3.3) / lazy + preload at idle / eager imports | eager imports (`src/views/ToolView.tsx`, `src/components/SettingsPanel.tsx`); a view is still mounted only while open. Data in flight shows `ViewLoading` (label + pulsing dot in theme tokens; the dot holds still with motion off or `prefers-reduced-motion`). Gated by `p3.mjs` `smart-view-ready` (`SMART_VIEW_READY_MAX_MS` 150 per view). ORCHESTRATOR brief, phase 3.4b | MEASURED 2026-11-24, installed app, real library, CDP, first open after a cold start: lazy 306-325 ms from click to content while the chunk loaded in 1-2 ms and IPC took <= 6 ms: react-dom 19.3.1 holds a Suspense fallback for >= 300 ms (`FALLBACK_THROTTLE_MS`), and the fallback (a bare shimmer panel) looks like an empty pane. Eager: 10-29 ms. The four chunks were 22 KB, so the preload option bought nothing but a timing dependency. Memory gate: README Re-score phase 3.4b | put `lazy` + `Suspense` back in both files (each first open then sits >= 300 ms on a fallback) |
+| 35 | What `similar` duplicates mean (integration-observed defect, orchestrator's cua-driver checks of 3.4b and of the first 3.4c rule) | dHash Hamming alone (3.2-3.4b) / dHash + pHash / dHash candidates + OCR text and embedding checks (first 3.4c rule: 5 of its 16 real pairs were different pictures) / those as pre-filters + a pixel check of the stored thumbnails | `similar` = **near-identical copies: a re-encode or a resize of one picture**; a changed stroke (one crow's foot), a cursor or a changed region fails the pair, not "same layout". 1. Candidate stage: dHash Hamming <= the slider (default 6, unchanged; raising it only widens the candidates) and an aspect ratio a copy could have (`SHAPE_SLACK_PX` 1: within the rounding of a resize of the smaller image). 2. Cheap checks (`smart::near_copy::plausible`), every one that applies must pass: OCR text (trigram Dice of lower-case, diacritic-folded words) >= `TEXT_MIN` 0.90 when both images have an OCR result and either has text; SigLIP cosine >= `COSINE_MIN` 0.96 when both have an embedding of the same model; when neither applies (AI absent, or no text and no embedding) dHash and pHash each within `HASH_ONLY_MAX` 2 bits (it bounds the decoding; the same-size condition of the first rule is gone, the pixels now vouch for a resize). 3. Pixel stage, the final arbiter (`smart::pixel_check`): the two grid thumbnails (`<data dir>\thumbs`, WebP q80, long edge 320) as luma, resized (Lanczos3) to the common size, smoothed with a [1, 2, 1] kernel both ways; the largest mean absolute difference over ~`BLOCK_PX` 4 px blocks must be <= `BLOCK_DIFF_MAX` 12 luma levels. Only the survivors of 2 are decoded (in parallel); a thumbnail whose `thumb_state` is not `ok`, or that is missing or does not decode, puts its image in no `similar` group. One rule (`smart::duplicates::groups`) for `find_duplicates` (duplicates view, its "keep the best" button, the cleanup wizard's opt-in similar step) and `get_stats` `duplicatesSimilar` ("Bản gần giống"). No schema change. ORCHESTRATOR decision (conservative, reversible), phase 3.4c | MEASURED 2026-11-24 (counts only; details in Re-score phase 3.4c). Real library, Hamming 6: 213 groups / 306 copies / largest 27 (3.4b) -> 16 / 16 / 2 (first 3.4c rule) -> **9 / 9 / 2**, exactly the 9 pixel-identical pairs; at 20 the same 9. Pixel stage on the stored thumbnails: 120 synthetic re-encodes and resizes of 20 local screenshots <= 9.8 (p90 7.3), the 9 identical real pairs 0, the 5 real pairs of different pictures 47.6-151.3, the 2 unverified real pairs 29.2 and 91.0 (not grouped); synthetic crow's-foot strokes 19/20 and cursors 18/20 above the bound | `same_picture` returning `true` restores the first 3.4c rule without its same-size condition; `hash_only_fits` also requiring `(a.width, a.height) == (b.width, b.height)` restores it exactly (`crates/ss-core/src/smart/`) |
 | 24 | Merge-up tree | tree / flat | flat lane plan (tree preflight hard-stopped: not a git repo; see `## Tree step`) | no repo yet, and never a remote or PR; lanes merge locally per D7 | re-plan after 1.1 if wanted |
 
 
