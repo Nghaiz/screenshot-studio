@@ -125,6 +125,18 @@ export function killTree(pid) {
   if (pid) run("taskkill", ["/PID", String(pid), "/T", "/F"]);
 }
 
+/** A user-style close: WM_CLOSE (taskkill without /F), then waits up to `maxMs` for the exe to go; kills the tree if it does not. */
+export async function closeApp(pid, maxMs = 10_000) {
+  const t0 = Date.now();
+  run("taskkill", ["/PID", String(pid)]);
+  while (Date.now() - t0 < maxMs) {
+    if (!runningPids(APP_EXE_NAME).includes(pid)) return { graceful: true, ms: Date.now() - t0 };
+    await sleep(200);
+  }
+  killTree(pid);
+  return { graceful: false, ms: Date.now() - t0 };
+}
+
 /**
  * Starts the app with CDP enabled: the release exe, or `exe` (e.g. the installed copy, phase 2.3; cwd = its dir).
  * `env` adds variables (value `undefined` removes one). `startedAt` is the epoch ms just before spawn (cold-start

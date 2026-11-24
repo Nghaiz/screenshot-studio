@@ -151,3 +151,38 @@ fn nothing_is_indexed_while_paused() {
     assert!(rec.news.lock().unwrap().is_empty());
     env.core.stop_watcher();
 }
+
+/// Phase 4.3 catch-up: a file that arrived while nothing watched (the app closed) is indexed when the watcher
+/// starts, with `library-changed`, and is not announced as a new screenshot.
+#[test]
+fn files_added_while_closed_are_caught_up_at_start_without_a_toast() {
+    let env = Env::new(2);
+    env.index(true);
+    let f = fixtures::write_fixture(&env.root_dir(), 103);
+    assert!(row(&env, &f.file_name).is_none(), "the fixture must be unindexed before the watcher starts");
+    let rec = Arc::new(Rec::default());
+    env.core.start_watcher(rec.clone()).expect("start watcher");
+    assert!(wait(NEW_FILE_MAX, || row(&env, &f.file_name).is_some_and(|r| r.thumb_state == ThumbState::Ok)), "not caught up at start");
+    assert!(
+        rec.changes.lock().unwrap().iter().any(|c| c.reason == LibraryChangeReason::Watcher),
+        "library-changed (watcher) went out"
+    );
+    assert!(!rec.announced(&f.file_name), "a caught-up file was announced as a new screenshot");
+    env.core.stop_watcher();
+}
+
+/// ... and a file added while the watcher was paused is caught up when it resumes.
+#[test]
+fn files_added_while_paused_are_caught_up_on_resume() {
+    let (env, rec) = watched(2);
+    let set = |on: bool| {
+        env.core.set_setting(Caller::Ui, SetSettingReq { key: SettingKey::WatcherEnabled, value: serde_json::Value::Bool(on) }).unwrap()
+    };
+    set(false);
+    assert!(wait(Duration::from_secs(5), || env.core.watched_roots() == 0), "pause did not stop watching");
+    let f = fixtures::write_fixture(&env.root_dir(), 108);
+    set(true);
+    assert!(wait(NEW_FILE_MAX, || row(&env, &f.file_name).is_some()), "not caught up on resume");
+    assert!(!rec.announced(&f.file_name), "a caught-up file was announced as a new screenshot");
+    env.core.stop_watcher();
+}
