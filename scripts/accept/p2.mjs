@@ -27,6 +27,11 @@
 //                    #31): a 10 s top-to-bottom scroll (lib/cdp.mjs scrollFrames, the method 1.4 measured 1,208 MB
 //                    with), then IDLE_MS without input; the PEAK of the samples from the end of the scroll to the end
 //                    of the idle is gated. FAIL also when the scroll did not reach the bottom.
+//                    The AI sidecar the app starts at launch (phase 3.2) is not part of the budget: the subtree under
+//                    the app's python.exe (venv launcher, interpreter, conhost) is cut out of every sample
+//                    (lib/run.mjs treeMemory `exclude`) and printed as INFO sidecar-after-scroll / -after-visit-all:
+//                    its state, private bytes and GPU memory (nvidia-smi compute apps; WDDM reports [N/A] there, so
+//                    the MB come from the Windows GPU Process Memory counters)
 //                    INFO memory-visit-all (measured, not gated, orchestrator decision in Deferred decision #31): a
 //                    page-by-page pass that waits on each screen until its thumbnails are loaded, so every loadable
 //                    thumbnail is decoded once; its peak and its value after IDLE_MS
@@ -36,16 +41,14 @@
 // The real data dir is only READ (README D10): the app indexes nothing unless a user asks it to; scrolling serves
 // thumbnails that already exist.
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { GRID, connectApp, percentile, scrollFrames, waitForGrid } from "./lib/cdp.mjs";
-import { APP_EXE, APP_EXE_NAME, ROOT, childEnv, killTree, run, runningPids, startApp, treeMemory } from "./lib/run.mjs";
+import { INSTALL_DIR, INSTALLED_EXE, installedExeCheck, powershell } from "./lib/install.mjs";
+import { APP_EXE_NAME, ROOT, childEnv, gpuMemory, isSidecarRoot, killTree, run, runningPids, startApp, treeMemory } from "./lib/run.mjs";
 
-const INSTALL_DIR = "D:\\IOT_Tools\\apps\\ScreenshotStudio"; // design-intent.md § Names and paths
-const INSTALLED_EXE = path.join(INSTALL_DIR, APP_EXE_NAME);
 const DATA_DIR = "D:\\IOT_Tools\\data\\ScreenshotStudio"; // ss-core DEFAULT_DATA_DIR (the app runs without SS_DATA_DIR)
 const WEBVIEW_DIR = path.join(DATA_DIR, "webview"); // src-tauri/src/window.rs WEBVIEW_DIR
 const IDENTIFIER = "dev.nghaiz.screenshotstudio"; // tauri.conf.json identifier
@@ -69,13 +72,6 @@ function report(ok, check, value) {
 }
 const tail = (s, n = 30) => s.trim().split(/\r?\n/).slice(-n).join("\n");
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
-
-/** Runs a PowerShell script in a child process (inputs through env vars, never spliced into the script). */
-function powershell(script, env = {}) {
-  const r = run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { env: childEnv(env) });
-  if (r.error || r.status !== 0) throw new Error(`powershell failed (${r.error?.message ?? `exit ${r.status}`}): ${tail(r.out, 5)}`);
-  return r.stdout.trim();
-}
 
 // --- tests (child processes) -------------------------------------------------------------------------
 
@@ -116,36 +112,11 @@ function checkUiTests() {
 
 // --- install: exe, Start Menu shortcut, no Desktop shortcut ------------------------------------------------
 
-// tauri-bundler stamps the package type into the exe copy it packs (`..._NSS` for NSIS) and restores `..._UNK` in
-// target\release afterwards (tauri-bundler 2.10 bundle.rs BUNDLE_VAR_TOKEN), so the two differ in exactly that marker.
-const BUNDLE_MARK = "__TAURI_BUNDLE_TYPE_VAR_";
-
-/** Same build = same bytes once the installed copy's NSIS stamp is put back to the unbundled one. */
-function sameBuild(installedExe, builtExe) {
-  const a = readFileSync(installedExe);
-  const b = readFileSync(builtExe);
-  if (a.length !== b.length) return { same: false, why: `size ${a.length} vs ${b.length} bytes` };
-  const nss = Buffer.from(`${BUNDLE_MARK}NSS`);
-  const unk = Buffer.from(`${BUNDLE_MARK}UNK`);
-  const at = a.indexOf(nss);
-  if (at < 0 || b.indexOf(unk) !== at) return { same: false, why: `no ${BUNDLE_MARK}NSS stamp at the built exe's ${BUNDLE_MARK}UNK offset` };
-  unk.copy(a, at);
-  const hash = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 16);
-  return a.equals(b) ? { same: true, why: `sha256 ${hash(b)} (NSIS stamp normalized)` } : { same: false, why: "bytes differ beyond the NSIS stamp" };
-}
-
+/** Reports `installed-exe` (lib/install.mjs); true when the launch checks can run. */
 function checkInstalledExe() {
-  if (!existsSync(INSTALLED_EXE)) {
-    report(false, "installed-exe", `${INSTALLED_EXE} missing: build with \`cargo tauri build\`, then run the installer with /S /D=${INSTALL_DIR}`);
-    return false;
-  }
-  if (!existsSync(APP_EXE)) {
-    report(false, "installed-exe", `${APP_EXE} missing: cannot tell whether the installed exe is the current build`);
-    return false;
-  }
-  const { same, why } = sameBuild(INSTALLED_EXE, APP_EXE);
-  report(same, "installed-exe", same ? `${INSTALLED_EXE} = ${APP_EXE}, ${why}` : `${INSTALLED_EXE} is not ${APP_EXE} (${why}): re-run the installer`);
-  return true;
+  const { ok, present, value } = installedExeCheck();
+  report(ok, "installed-exe", value);
+  return present;
 }
 
 function checkShortcuts() {
@@ -352,19 +323,35 @@ function pageThrough(page) {
   );
 }
 
+/** App + WebView2 tree, the AI sidecar's subtree split off into `excluded` (Deferred decision #31, phase 3.4). */
+const appMemory = (pid) => treeMemory(pid, { exclude: isSidecarRoot });
+
 /**
  * Samples the app tree's memory from now until IDLE_MS have passed with no input (the caller just finished a
  * scroll). Returns { peak, last, count }: `peak` is the sample with the most private bytes, `last` the final one.
  */
 async function idleSamples(page, pid) {
   const end = Date.now() + IDLE_MS;
-  const samples = [treeMemory(pid)];
+  const samples = [appMemory(pid)];
   while (Date.now() < end) {
     await page.waitForTimeout(Math.min(SAMPLE_GAP_MS, Math.max(0, end - Date.now())));
-    samples.push(treeMemory(pid));
+    samples.push(appMemory(pid));
   }
   const peak = samples.reduce((a, b) => (b.privateMB > a.privateMB ? b : a));
   return { peak, last: samples.at(-1), count: samples.length };
+}
+
+/**
+ * INFO line for the sidecar subtree of one sample (not gated: the budget is app + WebView2): its processes and
+ * private bytes, its GPU memory (lib/run.mjs gpuMemory) and its state as the app reports it.
+ */
+async function logSidecar(label, page, sample) {
+  const s = sample.excluded;
+  const status = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke("get_sidecar_status")).catch((e) => ({ state: `unread (${e.message})` }));
+  const gpu = s.pids.length ? gpuMemory(s.pids) : { dedicatedMB: 0, sharedMB: 0, nvidiaSmi: "no sidecar process" };
+  console.log(
+    `INFO sidecar-${label} state=${status.state} device=${status.device ?? "?"} processes=${s.processes} (${s.names || "none"}) private=${s.privateMB}MB workingSet=${s.workingSetMB}MB gpuDedicated=${gpu.dedicatedMB ?? "?"}MB gpuShared=${gpu.sharedMB ?? "?"}MB nvidia-smi=${gpu.nvidiaSmi} (not gated; excluded from memory)`,
+  );
 }
 
 /** Returns the WebView2 `--user-data-dir` seen while the app ran (for webview-data), or null. */
@@ -378,16 +365,17 @@ async function checkMemory() {
     const items = await waitForGrid(cdp.page);
     userDataDir = userDataDirOf(app.pid);
     await cdp.page.waitForTimeout(1000);
-    const idle = treeMemory(app.pid);
-    console.log(`INFO memory-idle processes=${idle.processes} workingSet=${idle.workingSetMB}MB private=${idle.privateMB}MB (first screen, ${items} items)`);
+    const idle = appMemory(app.pid);
+    console.log(`INFO memory-idle processes=${idle.processes} workingSet=${idle.workingSetMB}MB private=${idle.privateMB}MB (first screen, ${items} items; sidecar excluded)`);
     const { frames, scrolledPx, maxPx } = await scrollFrames(cdp.page, SCROLL_MS);
     const scroll = await idleSamples(cdp.page, app.pid);
     const reachedBottom = Math.round(scrolledPx) >= Math.round(maxPx);
     report(
       scroll.peak.privateMB <= MEMORY_MAX_MB && reachedBottom,
       "memory",
-      `peak=${scroll.peak.privateMB}MB (max ${MEMORY_MAX_MB}MB) afterIdle=${scroll.last.privateMB}MB workingSetPeak=${scroll.peak.workingSetMB}MB samples=${scroll.count}/${IDLE_MS / 1000}s processes=${scroll.peak.processes} (${scroll.peak.names}) items=${items} scrolled=${Math.round(scrolledPx)}/${Math.round(maxPx)}px p50=${percentile(frames, 50).toFixed(2)}ms p95=${percentile(frames, 95).toFixed(2)}ms`,
+      `peak=${scroll.peak.privateMB}MB (max ${MEMORY_MAX_MB}MB, app + WebView2) afterIdle=${scroll.last.privateMB}MB workingSetPeak=${scroll.peak.workingSetMB}MB samples=${scroll.count}/${IDLE_MS / 1000}s processes=${scroll.peak.processes} (${scroll.peak.names}) items=${items} scrolled=${Math.round(scrolledPx)}/${Math.round(maxPx)}px p50=${percentile(frames, 50).toFixed(2)}ms p95=${percentile(frames, 95).toFixed(2)}ms`,
     );
+    await logSidecar("after-scroll", cdp.page, scroll.last);
     const t0 = Date.now();
     const pass = await pageThrough(cdp.page);
     const visit = await idleSamples(cdp.page, app.pid);
@@ -396,6 +384,7 @@ async function checkMemory() {
     console.log(
       `INFO memory-visit-all peak=${visit.peak.privateMB}MB afterIdle=${visit.last.privateMB}MB (not gated, Deferred decision #31) covered=${covered} items=${items} visited=${pass.seen} thumbsLoaded=${pass.loaded} noThumb=${pass.icons} unloaded=${unloaded} pages=${pass.pages} waitedOut=${pass.waitedOut} pass=${Math.round((Date.now() - t0) / 1000)}s`,
     );
+    await logSidecar("after-visit-all", cdp.page, visit.last);
   } catch (e) {
     report(false, "memory", e.message.split("\n")[0]);
     console.error(e.stack ?? e.message);

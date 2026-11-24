@@ -28,7 +28,7 @@ import path from "node:path";
 import process from "node:process";
 import { crc32, deflateSync } from "node:zlib";
 import { connectApp, firstGridPaint, percentile, scrollFrames, waitForGrid } from "./lib/cdp.mjs";
-import { APP_EXE, APP_EXE_NAME, ROOT, SSCTL_EXE, buildRelease, run, runningPids, ssctl, startApp, treeMemory } from "./lib/run.mjs";
+import { APP_EXE, APP_EXE_NAME, ROOT, SSCTL_EXE, buildRelease, isSidecarRoot, run, runningPids, ssctl, startApp, treeMemory } from "./lib/run.mjs";
 
 const REAL_ROOT = "C:\\Users\\Nghaiz\\OneDrive\\Pictures\\Screenshots"; // design-intent.md default library root
 const REAL_DATA_DIR = "D:\\IOT_Tools\\data\\ScreenshotStudio"; // ss-core DEFAULT_DATA_DIR (ssctl without --data-dir)
@@ -168,7 +168,7 @@ async function checkApp() {
       report(ms < COLD_START_MAX_MS, "cold-start", `${ms}ms (max ${COLD_START_MAX_MS}ms, ${paint.method}, items=${items})`);
     }
     await cdp.page.waitForTimeout(1000); // let the first page of thumbnails settle before scrolling
-    const idle = treeMemory(app.pid);
+    const idle = treeMemory(app.pid, { exclude: isSidecarRoot }); // the AI sidecar is not app + WebView2 (README #31)
     console.log(`INFO memory-idle processes=${idle.processes} workingSet=${idle.workingSetMB}MB private=${idle.privateMB}MB (app + WebView2, first screen shown)`);
     const { frames, scrolledPx, maxPx } = await scrollFrames(cdp.page, FPS_SCROLL_MS);
     const p50 = percentile(frames, 50);
@@ -179,7 +179,7 @@ async function checkApp() {
       "fps",
       `p50=${p50.toFixed(2)}ms (${(1000 / p50).toFixed(1)}fps) p95=${p95.toFixed(2)}ms frames=${frames.length} items=${items} scrolled=${Math.round(scrolledPx)}/${Math.round(maxPx)}px`,
     );
-    const mem = treeMemory(app.pid);
+    const mem = treeMemory(app.pid, { exclude: isSidecarRoot }); // the AI sidecar is not app + WebView2 (README #31)
     console.log(`INFO memory processes=${mem.processes} workingSet=${mem.workingSetMB}MB private=${mem.privateMB}MB (app + WebView2, after scrolling ${items} items)`);
   } catch (e) {
     if (!coldDone) report(false, "cold-start", e.message.split("\n")[0]);

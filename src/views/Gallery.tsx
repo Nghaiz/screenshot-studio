@@ -8,6 +8,7 @@ import { notify } from "../actions/report";
 import { handleGridKey } from "../commands/gridKeys";
 import { rangeIds } from "../commands/targets";
 import { Cell, cellDomId } from "../components/Cell";
+import { SCROLL_IDLE_MS } from "../lib/defaults";
 import { readDragIds, setDragIds, isImageDrag } from "../lib/dnd";
 import type { ImageList } from "../data/images";
 import { useTimeline } from "../data/library";
@@ -25,6 +26,7 @@ import { monthGroups, sessionGroups, TimelineGrid } from "./TimelineGrid";
 import type { LayoutProps, Nav, RenderCell } from "./types";
 import { UniformGrid } from "./UniformGrid";
 import { useElementSize } from "./useElementSize";
+import { useScrollingFlag } from "./useScrollingFlag";
 
 export function Gallery({ list }: { list: ImageList }) {
   const t = useT();
@@ -36,6 +38,7 @@ export function Gallery({ list }: { list: ImageList }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<Nav | null>(null);
   const size = useElementSize(scrollRef);
+  useScrollingFlag(scrollRef, SCROLL_IDLE_MS); // shimmers hold still mid-scroll (index.css, Deferred decision #31)
   const gap = DENSITY_GAP[density];
   const isTimeline = viewName === "timeline";
   const timeline = useTimeline(list.query, isTimeline);

@@ -29,3 +29,7 @@ tauri-plugin-global-shortcut.workspace = true
 tauri-plugin-notification.workspace = true
 tauri-plugin-opener.workspace = true
 tauri-plugin-single-instance.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+webview2-com.workspace = true
+windows-core.workspace = true

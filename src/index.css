@@ -92,6 +92,12 @@ body {
 }
 [data-motion="off"] .ss-shimmer { animation: none; }
 @keyframes ss-shimmer { to { background-position: -200% 0; } }
+/* While the gallery scrolls (`data-scrolling`, views/useScrollingFlag.ts) placeholder shimmers hold still: a running
+   background animation restyles and repaints every unloaded cell on every frame of a fast scroll. Phase 3.4, real
+   library, memory gate (Deferred decision #31): scroll peak ~15 MB lower, mostly the WebView2 GPU process. Do not drop
+   the animation outright: with no frames between page scrolls the GPU process kept every decoded thumbnail it had
+   shown (visit-all peak 1,091 vs 797 MB), so it resumes as soon as the scroll stops. */
+[data-scrolling] .ss-shimmer { animation-play-state: paused; }
 
 /* Animated background: one fixed layer of three soft blobs (toggle in settings). */
 .ss-blob {

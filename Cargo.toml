@@ -46,6 +46,10 @@ tauri-plugin-global-shortcut = "2.4.1"
 tauri-plugin-notification = "2.8.1"
 tauri-plugin-opener = "2.7.3"
 tauri-plugin-single-instance = "2.5.5"
+# WebView2 memory target LOW (phase 3.4, Deferred decision #31). The exact versions tauri 2.12.7 / wry link (Cargo.lock),
+# so `PlatformWebview::controller()` and these COM types are the same types.
+webview2-com = "0.39.1"
+windows-core = "0.62.2"
 
 [profile.release]
 codegen-units = 1
