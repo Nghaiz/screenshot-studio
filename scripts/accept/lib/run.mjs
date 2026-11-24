@@ -127,14 +127,15 @@ export function killTree(pid) {
 
 /**
  * Starts the app with CDP enabled: the release exe, or `exe` (e.g. the installed copy, phase 2.3; cwd = its dir).
- * `startedAt` is the epoch ms just before spawn (cold-start origin). Resolves once the CDP endpoint answers;
- * `stop()` kills the app's process tree (WebView2 children included).
+ * `env` adds variables (value `undefined` removes one). `startedAt` is the epoch ms just before spawn (cold-start
+ * origin). Resolves once the CDP endpoint answers; `stop()` kills the app's process tree (WebView2 children included).
  */
-export async function startApp({ dataDir, cdpPort = CDP_PORT, timeoutMs = 60_000, exe = APP_EXE } = {}) {
+export async function startApp({ dataDir, cdpPort = CDP_PORT, timeoutMs = 60_000, exe = APP_EXE, env: extraEnv = {} } = {}) {
   if (!existsSync(exe)) throw new Error(`${exe} missing: build it first`);
   const env = childEnv({
     SS_DATA_DIR: dataDir,
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: [`--remote-debugging-port=${cdpPort}`, ...WEBVIEW_FLAGS].join(" "),
+    ...extraEnv,
   });
   const startedAt = Date.now();
   const proc = spawn(exe, [], { cwd: exe === APP_EXE ? ROOT : path.dirname(exe), env, stdio: ["ignore", "pipe", "pipe"] });
@@ -153,13 +154,22 @@ export async function startApp({ dataDir, cdpPort = CDP_PORT, timeoutMs = 60_000
 }
 
 /**
+ * The AI sidecar's root process under the app (D6: `<venv>\Scripts\python.exe -m ss_sidecar`; the uv/venv
+ * `python.exe` is a launcher whose child is the real interpreter, docs/lessons.md phase 3.1). Its whole subtree
+ * (interpreter, conhost) is the sidecar.
+ */
+export const isSidecarRoot = (p) => /^pythonw?\.exe$/i.test(p.Name ?? "");
+
+/**
  * Memory of a process and all its descendants (the app + its WebView2 browser, GPU and renderer processes):
- * { processes, workingSetMB, privateMB, names } from Win32_Process (WorkingSetSize, PrivatePageCount, in bytes).
+ * { processes, workingSetMB, privateMB, names, pids, procs: [{ pid, name }], excluded } from Win32_Process
+ * (WorkingSetSize, PrivatePageCount, in bytes). `exclude(row)` cuts a descendant's whole subtree out of the totals into `excluded` (same fields): the
+ * AI sidecar is not part of the app + WebView2 budget (Deferred decision #31), so callers pass `isSidecarRoot`.
  * A child must have started after its parent: Windows reuses PIDs and never updates ParentProcessId, so an older
  * process whose dead parent's PID now belongs to one of ours is not ours (phase 2.3 counted a foreign 24 MB
  * `NhNotifSys.exe` under the WebView2 crashpad handler that way).
  */
-export function treeMemory(rootPid) {
+export function treeMemory(rootPid, { exclude } = {}) {
   const ps =
     "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize,PrivatePageCount," +
     "@{n='Created';e={ if ($_.CreationDate) { ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds() } else { 0 } }} | ConvertTo-Json -Compress";
@@ -169,13 +179,46 @@ export function treeMemory(rootPid) {
   const kids = new Map();
   for (const p of rows) kids.set(p.ParentProcessId, [...(kids.get(p.ParentProcessId) ?? []), p]);
   const tree = [];
-  const stack = rows.filter((p) => p.ProcessId === rootPid);
+  const cut = [];
+  const stack = rows.filter((p) => p.ProcessId === rootPid).map((p) => ({ p, out: false }));
   while (stack.length) {
-    const p = stack.pop();
-    tree.push(p);
-    stack.push(...(kids.get(p.ProcessId) ?? []).filter((c) => c.ProcessId !== p.ProcessId && Number(c.Created) >= Number(p.Created)));
+    const { p, out } = stack.pop();
+    (out ? cut : tree).push(p);
+    for (const c of kids.get(p.ProcessId) ?? []) {
+      if (c.ProcessId === p.ProcessId || Number(c.Created) < Number(p.Created)) continue;
+      stack.push({ p: c, out: out || !!exclude?.(c) });
+    }
   }
-  const mb = (k) => Math.round(tree.reduce((a, p) => a + Number(p[k] ?? 0), 0) / 1048576);
-  const names = [...new Set(tree.map((p) => p.Name))].sort().join(",");
-  return { processes: tree.length, workingSetMB: mb("WorkingSetSize"), privateMB: mb("PrivatePageCount"), names };
+  const sum = (list) => {
+    const mb = (k) => Math.round(list.reduce((a, p) => a + Number(p[k] ?? 0), 0) / 1048576);
+    const names = [...new Set(list.map((p) => p.Name))].sort().join(",");
+    const procs = list.map((p) => ({ pid: p.ProcessId, name: p.Name }));
+    return { processes: list.length, workingSetMB: mb("WorkingSetSize"), privateMB: mb("PrivatePageCount"), names, pids: procs.map((p) => p.pid), procs };
+  };
+  return { ...sum(tree), excluded: sum(cut) };
+}
+
+/**
+ * GPU memory of `pids` (measured only, never gated): { dedicatedMB, sharedMB, nvidiaSmi }.
+ * `nvidia-smi --query-compute-apps` is asked first, but under WDDM (every Windows desktop driver) it lists the
+ * processes with `used_memory` [N/A]; `nvidiaSmi` keeps its answer for these PIDs verbatim. The MB figures come from
+ * the Windows "GPU Process Memory" counters (WMI class Win32_PerfFormattedData_GPUPerformanceCounters_GPUProcessMemory,
+ * instance `pid_<pid>_luid_..._phys_<n>`, summed over adapters; WMI class names are not localized, counter paths are).
+ */
+export function gpuMemory(pids) {
+  const want = new Set(pids.map(Number));
+  const smi = run("nvidia-smi", ["--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader,nounits"]);
+  let nvidiaSmi;
+  if (smi.error || smi.status !== 0) nvidiaSmi = `unavailable (${smi.error?.code ?? `exit ${smi.status}`})`;
+  else {
+    const rows = smi.stdout.split(/\r?\n/).map((l) => l.split(",").map((s) => s.trim())).filter((c) => want.has(Number(c[0])));
+    nvidiaSmi = rows.length ? rows.map((c) => `pid${c[0]}=${c[2]}`).join(" ") : "not listed";
+  }
+  const ps =
+    "@(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUProcessMemory | Select-Object Name,DedicatedUsage,SharedUsage) | ConvertTo-Json -Compress";
+  const r = run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps]);
+  if (r.error || r.status !== 0) return { dedicatedMB: null, sharedMB: null, nvidiaSmi };
+  const rows = [JSON.parse(r.stdout || "[]")].flat().filter((c) => want.has(Number(/^pid_(\d+)_/.exec(c.Name ?? "")?.[1])));
+  const mb = (k) => Math.round(rows.reduce((a, c) => a + Number(c[k] ?? 0), 0) / 1048576);
+  return { dedicatedMB: mb("DedicatedUsage"), sharedMB: mb("SharedUsage"), nvidiaSmi };
 }

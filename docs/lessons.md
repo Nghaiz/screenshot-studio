@@ -3,6 +3,54 @@
 Non-obvious gotchas found while building Screenshot Studio. Owner rule: lessons stay in this repo, nothing goes
 to a kit. Newest first. One entry: what happened, why, what to do.
 
+## 2026-11-24 — phase 3.4
+
+### The memory gate's scroll peak is render churn, and the shimmer's frames are what trim the decode cache
+- **Seen:** `p2.mjs` `memory` FAIL at 512 MB after 3.3, with the sidecar already cut out. Per process at the scroll
+  peak (real library, installed app): WebView2 GPU process 266-298 MB, renderer 138-154, browser 42, app 15-18,
+  network 12, storage 7, crashpad 3. Only 25 thumbnails were fetched during the 10 s scroll; the renderer's growth
+  (49 -> ~145 MB) was garbage: memory-infra dump `blink_gc` 6 -> 76 MB, `v8` 9 -> 31 MB.
+- **3.3 added nothing measurable.** Peaks over repeated runs: 495-519 MB (mean ~506) when the scroll overlaps the
+  sidecar's model loading, 485-504 (mean ~495) once it is ready; phase 2.3 measured 496-500 with no sidecar. The gate
+  had no headroom, as 2.3 warned; the noise is mostly the GPU process.
+- **Tried, measured, not kept:** grid placeholders without the shimmer animation: scroll peak 483-494, but visit-all
+  peak 1,091 vs 797 MB (after idle 899 vs 599). Pausing the shimmer while scrolling (`data-scrolling`, 150 ms): scroll
+  479-486, visit-all 1,073. With fewer frames between page scrolls the GPU process keeps the decoded thumbnails it
+  has shown; the running shimmer's frames were what let Chromium trim them. WebView2 `MemoryUsageTargetLevel` LOW
+  alone: first screen 324 vs 402-416, scroll peak unchanged (495-501).
+- **Kept: both together** (`window.rs` `hold_low_memory_target` + `useScrollingFlag`): see README Re-score phase 3.4.
+  LOW makes WebView2 trim what the pause no longer trims, the pause removes the scroll's repaint churn.
+- **Do:** measure any change to how the grid renders against BOTH `memory` (gated scroll) and `INFO memory-visit-all`
+  before shipping it; a lever that wins one can lose the other by hundreds of MB. Per-process splits and an A/B over
+  CDP (`addStyleTag`, a page script) need no rebuild; repeat each arm 3+ times, single runs differ by 10-20 MB.
+
+### Tauri `bundle.resources`: a glob key flattens its matches into the target dir
+- **Seen in the source (tauri-utils 2.10.4 `resources.rs`):** in the map form, a key with `*` puts every match at
+  `<target>/<file name>`; only a plain directory key keeps the tree below it (and then copies everything: tests,
+  `__pycache__`, caches). A key `../sidecar/ss_sidecar/**/*.py` would drop `engines/ocr_rapid.py` next to
+  `__main__.py`.
+- **Do:** one glob per source directory (`tauri.conf.json`: `ss_sidecar/*.py` and `ss_sidecar/engines/*.py`). A new
+  subpackage is then left out SILENTLY: CI compares `target\debug\sidecar` + `contracts` with `git ls-files` and
+  `p3.mjs` `bundled-files` does the same against the install dir. tauri-build copies the resources next to the exe on
+  every `cargo build` too (`target\<profile>\sidecar`), not only into the installer.
+
+### `nvidia-smi --query-compute-apps` cannot measure a process's GPU memory on Windows
+- **Seen:** every process, ours included, listed with `used_memory` `[N/A]` (WDDM driver model, every Windows desktop
+  driver).
+- **Do:** per-process dedicated/shared GPU memory comes from the WMI class
+  `Win32_PerfFormattedData_GPUPerformanceCounters_GPUProcessMemory` (instance `pid_<pid>_luid_..._phys_<n>`; WMI class
+  names are not localized, `Get-Counter` paths are). `lib/run.mjs` `gpuMemory` prints both.
+
+### A console window does not have to belong to a descendant of the app
+- **Seen:** this machine delegates the default terminal to Windows Terminal (`HKCU\Console\%%Startup`
+  `DelegationTerminal`). A console started without `CREATE_NO_WINDOW` opens as a `CASCADIA_HOSTING_WINDOW_CLASS`
+  window of `WindowsTerminal.exe`, which is not in the app's process tree, or as a tab of an open terminal (no new
+  top-level window at all).
+- **Do:** look at both ends (`scripts/accept/lib/windows.mjs`): new visible top-level windows by class/process name
+  (a WinEvent `EVENT_OBJECT_SHOW` hook plus a 200 ms `EnumWindows` poll), and `AttachConsole(pid)` +
+  `GetConsoleWindow()` for each sidecar process (hwnd 0 = a console without a window, `CREATE_NO_WINDOW`). Proved red
+  with `cmd /c start "" cmd /c ...` (both signals fire) and green with a hidden child.
+
 ## 2026-11-24 — phase 3.3
 
 ### The mock and the backend can disagree on list order the contract never fixed

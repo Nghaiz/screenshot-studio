@@ -41,6 +41,8 @@ export const DRAG_MIME = "application/x-ss-image-ids";
 export const LASSO_MIN_PX = 4;
 /** A grid cell must stay mounted this long before its thumbnail is fetched and decoded (see Cell.tsx). */
 export const THUMB_SETTLE_MS = 150;
+/** The gallery counts as scrolling until this long after its last scroll event (views/useScrollingFlag.ts). */
+export const SCROLL_IDLE_MS = 150;
 
 // ---- phase 3.3: AI sidecar, smart tools ----------------------------------------------------------
 

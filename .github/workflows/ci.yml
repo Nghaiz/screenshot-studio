@@ -71,3 +71,14 @@ jobs:
         run: cargo test --workspace --locked
       - name: Build the Tauri app crate
         run: cargo build -p screenshot-studio --locked
+      # tauri-build copies `bundle.resources` next to the exe, exactly what the installer ships (phase 3.4). Each
+      # glob there names ONE directory, so a new sidecar subpackage would be left out silently: compare with git.
+      - name: Bundled sidecar resources match the tracked source
+        shell: pwsh
+        run: |
+          $want = @(git ls-files -- 'sidecar/ss_sidecar/*.py' | ForEach-Object { $_ }) + 'contracts/sidecar-jsonrpc.schema.json'
+          $got = @('sidecar', 'contracts') | ForEach-Object { Get-ChildItem "target/debug/$_" -Recurse -File -ErrorAction SilentlyContinue } |
+            ForEach-Object { [IO.Path]::GetRelativePath("$PWD/target/debug", $_.FullName).Replace('\', '/') }
+          $diff = Compare-Object ($want | Sort-Object) ($got | Sort-Object)
+          if ($diff) { $diff | Format-Table | Out-String | Write-Host; throw 'bundle.resources do not match sidecar/ss_sidecar/**/*.py + the schema' }
+          Write-Host "bundle.resources: $($want.Count) files match"
